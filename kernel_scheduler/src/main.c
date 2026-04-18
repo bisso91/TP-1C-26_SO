@@ -11,14 +11,14 @@ int main(int argc, char *argv[]) {
   //===================================================
   //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE   
   //===================================================
-  t_log *logger_cliente = log_create("io.log", "IO", true, LOG_LEVEL_INFO);
+  t_log *logger_cliente = log_create("scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
 
   if (logger_cliente == NULL) {
     printf("Error al crear el logger de cliente\n");
     return 1;
   }
 
-  t_config *config_cliente = config_create("io.config");
+  t_config *config_cliente = config_create("kernel_scheduler.config");
   if (config_cliente == NULL) {
     log_error(logger_cliente, "No se pudo encontrar el arhcivo scheduler.config");
     return 1;
