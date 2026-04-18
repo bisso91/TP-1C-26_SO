@@ -1,4 +1,5 @@
 #include "main.h"
+#include <commons/config.h>
 #include <commons/log.h>
 #include <utils/hello.h>
 #include <utils/utils.h>
@@ -8,13 +9,16 @@ int main(int argc, char *argv[]) {
 
   // Levanto el logger
   t_log *logger_Cpu;
-  t_config *config_Cpu
+  t_config *config_Cpu;
 
-      logger_Cpu = iniciar_logger();
+  logger_Cpu = iniciar_logger();
 
   log_info(logger_Cpu, "A VER SI ANDA");
   // Paso archivo de config
   config_Cpu = iniciar_config();
+
+  log_destroy(logger_Cpu);
+  config_destroy(config_Cpu);
 
   return 0;
 }
