@@ -9,9 +9,10 @@ int main(int argc, char *argv[]) {
   saludar("kernel_scheduler");
 
   //===================================================
-  //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE   
+  //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE
   //===================================================
-  t_log *logger_cliente = log_create("scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
+  t_log *logger_cliente =
+      log_create("scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
 
   if (logger_cliente == NULL) {
     printf("Error al crear el logger de cliente\n");
@@ -20,7 +21,8 @@ int main(int argc, char *argv[]) {
 
   t_config *config_cliente = config_create("kernel_scheduler.config");
   if (config_cliente == NULL) {
-    log_error(logger_cliente, "No se pudo encontrar el arhcivo scheduler.config");
+    log_error(logger_cliente,
+              "No se pudo encontrar el arhcivo scheduler.config");
     return 1;
   }
 
@@ -74,6 +76,18 @@ int main(int argc, char *argv[]) {
     int cliente_fd = esperar_cliente(server_fd);
     log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d",
              cliente_fd);
+
+    //---------PRUEBA DE MENSAJE CON IO
+    // recibo el cop
+    int cod_op = recibir_operacion(cliente_fd);
+    // si es un msg, lo leo y lo logueo
+    if (cod_op == MENSAJE) {
+      recibir_mensaje(cliente_fd, logger_server);
+    }
+    else {
+      log_warning(logger_server,"Operación no indentificada.");
+    }
+
   }
 
   // libero memoria
