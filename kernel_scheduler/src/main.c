@@ -76,18 +76,47 @@ int main(int argc, char *argv[]) {
     int cliente_fd = esperar_cliente(server_fd);
     log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d",
              cliente_fd);
-
+    //===================================================
     //---------PRUEBA DE MENSAJE CON IO
     // recibo el cop
     int cod_op = recibir_operacion(cliente_fd);
     // si es un msg, lo leo y lo logueo
     if (cod_op == MENSAJE) {
-      recibir_mensaje(cliente_fd, logger_server);
-    }
-    else {
-      log_warning(logger_server,"Operación no indentificada.");
-    }
+      //recibir_mensaje(cliente_fd, logger_server);
+      // --- INICIO PRUEBA ---
+        log_info(logger_server, "Enviando orden de SLEEP de prueba a la IO...");
+        
+        // Armamos el paquete crudo tal cual lo espera tu IO
+        t_paquete* paquete_prueba = malloc(sizeof(t_paquete));
+        paquete_prueba->cop = IO_SLEEP; // Podés cambiarlo a IO_STDIN o IO_STDOUT para probar las otras
+        paquete_prueba->buffer = malloc(sizeof(t_buffer));
+        paquete_prueba->buffer->size = sizeof(int) * 2; // PID (4 bytes) + Tiempo (4 bytes)
+        paquete_prueba->buffer->stream = malloc(paquete_prueba->buffer->size);
+        
+        int pid_prueba = 404;
+        int parametro_prueba = 3000; // 3000 milisegundos (o 3000 caracteres a leer si pruebas STDIN)
+        
+        memcpy(paquete_prueba->buffer->stream, &pid_prueba, sizeof(int));
+        memcpy(paquete_prueba->buffer->stream + sizeof(int), &parametro_prueba, sizeof(int));
+        
+        enviar_paquete(paquete_prueba, cliente_fd);
+        eliminar_paquete(paquete_prueba);
 
+        // Esperamos a que la IO nos conteste el "FIN_IO"
+        int op_rta = recibir_operacion(cliente_fd);
+        if(op_rta == MENSAJE) {
+            recibir_mensaje(cliente_fd, logger_server);
+        } else if (op_rta == IO_STDIN || op_rta == IO_STDOUT) {
+            // Si probás STDIN/STDOUT, tu IO manda un paquete entero de vuelta, no solo un mensaje
+            int size_rta;
+            void* buffer_rta = recibir_buffer(&size_rta, cliente_fd);
+            log_info(logger_server, "La IO terminó y respondió!");
+            free(buffer_rta);
+        }
+        // --- FIN PRUEBA ---
+    } else {
+      log_warning(logger_server, "Operación no indentificada.");
+    }
   }
 
   // libero memoria
