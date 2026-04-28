@@ -17,5 +17,23 @@ int esperar_cliente(int socket_servidor);
 int crear_conexion(char *ip, char *puerto);
 void liberar_conexion(int socket_cliente);
 
+// --- ESTADOS DE UN PROCESO --- //
+typedef enum{
+    ESTADO_NEW,
+    ESTADO_READY,
+    ESTADO_BLOCK,
+    ESTADO_SUS_READY,
+    ESTADO_SUS_BLOCK,
+    ESTADO_EXIT
+} t_estado;
+
+// --- PROCESS CONTROL BLOCK --- //
+typedef struct{
+    int pid;
+    int program_counter;
+    t_estado estado;
+    // agregar registro cpu y otros
+} t_pcb;
+
 #endif /* UTILS_H_ */
 

@@ -4,13 +4,51 @@
 #include <stdlib.h>
 #include <utils/hello.h>
 #include <utils/utils.h>
+#include <commons/collections/queue.h>
+#include <pthread.h> // manejo de semaforos
+
+// --- asignacion de pid --- //
+int generador_pid = 1;
+
+// --- colas de planificación --- //
+t_queue *cola_new;
+t_queue *cola_ready;
+t_queue *cola_block;
+t_queue *cola_exit;
+// ------------------------------ //
+
+// --- mutex para proteger colas --- //
+pthread_mutex_t mutex_new;
+pthread_mutex_t mutex_ready;
+pthread_mutex_t mutex_block;
+pthread_mutex_t mutex_exit;
+// --------------------------------- //
+
+
+//////////////////////////////////////////
+/////////////////////////////////////////
+// ================ FUNCIONES ================ //
+void crear_proceso() {
+  
+  t_pcb *nuevo_pcb = malloc(sizeof(t_pcb));
+  nuevo_pcb->pid = generador_pid++;
+  nuevo_pcb->program_counter = 0;
+  nuevo_pcb->estado = ESTADO_NEW;
+
+  pthread_mutex_lock(&mutex_new);
+  queue_push(cola_new, nuevo_pcb);
+  pthread_mutex_unlock(&mutex_new);
+
+  log_info(, "Se creo el proceso con PID %d, y se encoló en NEW", nuevo_pcb->pid);
+}
+// =========================================== //
 
 int main(int argc, char *argv[]) {
   saludar("kernel_scheduler");
 
-  //===================================================
-  //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE   
-  //===================================================
+  //===================================================//
+  //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE   //
+  //===================================================//
   t_log *logger_cliente = log_create("scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
 
   if (logger_cliente == NULL) {
@@ -41,9 +79,9 @@ int main(int argc, char *argv[]) {
   liberar_conexion(conexion);
   config_destroy(config_cliente);
   log_destroy(logger_cliente);
-  //===================================================
-  //     CONFIGURACION DEL PLANIFICADOR COMO SERVER
-  //===================================================
+  //===================================================//
+  //     CONFIGURACION DEL PLANIFICADOR COMO SERVER    //
+  //===================================================//
   t_log *logger_server = log_create("kernel_scheduler.log", "KERNEL_SCHEDULER",
                                     true, LOG_LEVEL_INFO);
   if (logger_server == NULL) {
@@ -69,12 +107,27 @@ int main(int argc, char *argv[]) {
            "Kernel Scheduler iniciado en %s:%s. Esperando conexiones...",
            ip_server, puerto_server);
 
-  // espero clientes
+  // --- inicialización de colas --- //
+  cola_new = queue_create();
+  cola_ready = queue_create();
+  cola_block = queue_create();
+  cola_exit = queue_create();
+  // ------------------------------- //
+
+  // --- inicialización de mutex --- //
+  pthread_mutex_init(&mutex_new, NULL);
+  pthread_mutex_init(&mutex_ready, NULL);
+  pthread_mutex_init(&mutex_block, NULL);
+  pthread_mutex_init(&mutex_exit, NULL);
+  // ------------------------------- //
+
+           // espero clientes
   while (1) {
     int cliente_fd = esperar_cliente(server_fd);
     log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d",
              cliente_fd);
   }
+
 
   // libero memoria
   config_destroy(config_server);
