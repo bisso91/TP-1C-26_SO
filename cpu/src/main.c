@@ -6,6 +6,9 @@
 #include <utils/hello.h>
 #include <utils/utils.h>
 
+//prox sacar esto de aca y ponerlo en un .h aparte
+void prueba_conexion_con_kernel_memory(int cliente_fd, t_log* logger);
+
 int main(int argc, char *argv[]) {
   saludar("cpu");
 
@@ -46,6 +49,7 @@ int main(int argc, char *argv[]) {
   int conexion_memory = crear_conexion(ip_memory, puerto_memory);
   if (conexion_memory != -1) {
     log_info(logger, "## Conectado a Kernel Memory");
+    prueba_conexion_con_kernel_memory(conexion_memory, logger);
   } else {
     log_error(logger, "Error al conectar a Kernel Memory");
   }
@@ -75,4 +79,33 @@ int main(int argc, char *argv[]) {
   log_destroy(logger);
 
   return 0;;
+}
+
+void prueba_conexion_con_kernel_memory(int conexion_memory, t_log* logger) {
+  t_paquete* paquete_iniciar = crear_paquete();
+    paquete_iniciar->cop = INICIAR_PROCESO;
+    enviar_paquete(paquete_iniciar, conexion_memory);
+    eliminar_paquete(paquete_iniciar);
+
+    // Le damos un microsegundo para que termine de procesar el archivo
+    usleep(1000); 
+
+    // 2. Le pedimos la primera instrucción (nuestro código hardcodeado pide el PC 0)
+    t_paquete* paquete_pedir = crear_paquete();
+    paquete_pedir->cop = PEDIR_INSTRUCCION;
+    enviar_paquete(paquete_pedir, conexion_memory);
+    eliminar_paquete(paquete_pedir);
+
+    // 3. Recibimos la respuesta de Kernel Memory (ahora nos va a mandar un paquete, no un int)
+    int cod_op = recibir_operacion(conexion_memory);
+    if (cod_op == MENSAJE) { // O el código que hayas usado
+        // Recibimos el tamaño del string y luego el string
+        int size;
+        recv(conexion_memory, &size, sizeof(int), MSG_WAITALL);
+        char* instruccion = malloc(size);
+        recv(conexion_memory, instruccion, size, MSG_WAITALL);
+
+        log_info(logger, "PRUEBA ÉXITO: Recibí la instrucción '%s'", instruccion);
+        free(instruccion);
+    }
 }

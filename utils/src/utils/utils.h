@@ -11,7 +11,11 @@
 
 // struc's de paquetes
 
-typedef enum { MENSAJE, PAQUETE, IO_SLEEP, IO_STDIN, IO_STDOUT } op_code;
+typedef enum { MENSAJE, PAQUETE, IO_SLEEP, IO_STDIN, IO_STDOUT, INICIAR_PROCESO,
+    PEDIR_INSTRUCCION,
+    CONSULTAR_ESPACIO_LIBRE,
+    LEER_MEMORIA_MOCK,
+    ESCRIBIR_MEMORIA_MOCK } op_code;
 
 typedef struct {
   int size;
