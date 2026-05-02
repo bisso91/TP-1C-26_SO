@@ -32,9 +32,18 @@ extern pthread_mutex_t mutex_exit;
 extern sem_t sem_procesos_en_new;
 extern sem_t sem_grado_multiprogramacion;
 extern sem_t sem_procesos_en_ready;
+// --------------------------------- //
+
+
+// --- socket --- //
+extern int socket_cpu_dispatch;
+
+// --------------------------------- //
+
 
 // --- PROTOTIPOS DE FUNCIONES --- //
 void crear_proceso();
 void *planificador_largo_plazo(void *arg);
+void *planificador_corto_plazo_fifo(void *arg);
 
 #endif

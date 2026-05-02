@@ -74,8 +74,16 @@ int main(int argc, char *argv[]) {
   pthread_t hilo_plp;
   pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
   pthread_detach(hilo_plp);
+
+
+  pthread_t hilo_pcp;
+  pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
+  pthread_detach(hilo_pcp);
   
+  // -------------------------------------------------- //   
+    
   // -------------------------------------------------- //
+
   if (logger_server == NULL) {
     printf("No se creo el logger");
     return 1;

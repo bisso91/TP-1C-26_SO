@@ -3,6 +3,7 @@
 // --- Definición de variables globales --- //
 t_log *logger_server;
 int generador_pid = 1;
+int socket_cpu_dispatch = -1;
 
 t_queue *cola_new;
 t_queue *cola_ready;
@@ -56,4 +57,30 @@ void *planificador_largo_plazo(void *arg){
     }
     return NULL;
 }
+
+void *planificador_corto_plazo_fifo(void *arg){
+    while (1){
+        sem_wait(&sem_procesos_en_ready);
+
+        pthread_mutex_lock(&mutex_ready);
+        t_pcb *pcb_a_ejecutar = queue_pop(cola_ready);
+        pthread_mutex_unlock(&mutex_ready);
+        
+        pcb_a_ejecutar->estado = ESTADO_EXEC;
+
+        log_info(logger_server, "## PID: %d - Estado Anterior: READY - Estado Actual: EXEC", pcb_a_ejecutar->pid);
+
+        if(socket_cpu_dispatch != -1){
+            log_info(logger_server, "Despachando proceso PID: %d a la CPU...", pcb_a_ejecutar->pid);
+            enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch);
+        } else {
+            log_error(logger_server, "Error: La CPU no esta conectada aún");
+        }
+
+        log_info(logger_server, "Despachando proceso PID: %d a la CPU...", pcb_a_ejecutar->pid);    
+    }
+    //armar paquete y enviarlo por el socket dispatch al cpu
+
+    return NULL;
+};
 // =========================================== //
