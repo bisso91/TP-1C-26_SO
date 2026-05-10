@@ -70,3 +70,25 @@ int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger) {
   }
   return conexion;
 }
+
+// FUNCIONES PARA RECIBIR DATOS...
+
+// 1 Para recibir solo el número del código de operación
+int recibir_operacion(int socket_cliente) {
+  int cod_op;
+  if (recv(socket_cliente, &cod_op, sizeof(int), MSG_WAITALL) > 0)
+    return cod_op;
+  else {
+    close(socket_cliente);
+    return -1;
+  }
+}
+
+// 2 Para recibir el "cuerpo" del mensaje...si viene con datos
+void *recibir_buffer(int *size, int socket_cliente) {
+  void *buffer;
+  recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
+  buffer = malloc(*size);
+  recv(socket_cliente, buffer, *size, MSG_WAITALL);
+  return buffer;
+}
