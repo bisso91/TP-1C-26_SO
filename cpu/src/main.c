@@ -42,14 +42,14 @@ int main(int argc, char *argv[]) {
     log_error(logger_cpu, "No se pudo encontrar el archivo cpu.config");
     return 1;
   } else {
-    printf("Archivo de cofiguracion creado correctamente\n");
+    printf("Archivo de configuracion creado correctamente\n");
   }
 
   t_registros registros;
 
-  cargar_configuracion(&config_cpu, config_plana);
-
-  if (!cargar_configuracion(&config_cpu, config_plana)) {
+  // Aca cuando se hace el if, al evaluar ya ejecuta la funcion y me carga la
+  // config
+  if (!cargar_configuracion(&config_cpu, config_plana, logger_cpu)) {
     log_error(logger_cpu, "Error al cargar configuración");
     return 1;
   }
@@ -70,6 +70,15 @@ int main(int argc, char *argv[]) {
     log_error(logger_cpu, "No se pudieron establecer todas las conexiones "
                           "necesarias. Libero memoria y termino programa.");
     // ... liberar memoria y salir
+    liberar_conexion(fd_memory);
+    liberar_conexion(fd_scheduler);
+    liberar_conexion(fd_stick);
+    return 1;
+  }
+
+  // Inicializo los registros
+  if (!inicializar_registros(&registros, logger_cpu)) {
+    log_error(logger_cpu, "Falla crítica al inicializar estructuras de CPU");
     liberar_conexion(fd_memory);
     liberar_conexion(fd_scheduler);
     liberar_conexion(fd_stick);

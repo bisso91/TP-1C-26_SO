@@ -1,6 +1,12 @@
 #include "cpu_utils.h"
+#include <stdbool.h>
 
-void inicializar_registros(t_registros *registros) {
+bool inicializar_registros(t_registros *registros, t_log *logger) {
+  if (registros == NULL) {
+    log_error(logger,
+              "Error: Se intentó inicializar un puntero a registros nulo.");
+    return false;
+  }
   registros->PC = 0;
   registros->AX = 0;
   registros->BX = 0;
@@ -12,9 +18,13 @@ void inicializar_registros(t_registros *registros) {
   registros->EDX = 0;
   registros->SI = 0;
   registros->DI = 0;
+
+  log_info(logger, "## Registros inicializados correctamente (PC en 0)");
+  return true;
 }
 
-bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw) {
+bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
+                          t_log *logger) {
 
   // 1. Validamos TODAS las claves necesarias para que no rompa
   if (!config_has_property(config_raw, "IP_MEMORY") ||

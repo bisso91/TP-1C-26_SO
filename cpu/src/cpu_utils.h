@@ -3,6 +3,7 @@
 
 #include <commons/config.h>
 #include <commons/log.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,5 +36,8 @@ typedef struct {
 } t_registros;
 
 int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
-bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw);
+bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
+                          t_log *logger);
+bool inicializar_registros(t_registros *registros, t_log *logger);
+
 #endif
