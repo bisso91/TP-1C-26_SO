@@ -7,6 +7,7 @@
 #include <semaphore.h>
 #include <stdlib.h>
 #include <utils/utils.h>
+#include <commons/collections/dictionary.h>
 
 // --- VARIABLES GLOBALES (compartidas) --- //
 extern t_log *logger_server;
@@ -34,6 +35,11 @@ extern sem_t sem_grado_multiprogramacion;
 extern sem_t sem_procesos_en_ready;
 // --------------------------------- //
 
+// --- Diccionario para guardar los sockets de IO --- //
+extern t_dictionary *interfaces_io;
+extern pthread_mutex_t mutex_interfaces_io;
+
+
 
 // --- socket --- //
 extern int socket_cpu_dispatch;
@@ -46,4 +52,7 @@ void crear_proceso();
 void *planificador_largo_plazo(void *arg);
 void *planificador_corto_plazo_fifo(void *arg);
 
+// --- FUNCIONES PARA MANEJO DE IO Y BLOQUEDOS ---//
+void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall);
+void desbloquear_proceso_de_io(t_pcb *pcb);
 #endif

@@ -58,6 +58,7 @@ int main(int argc, char *argv[]) {
   cola_ready = queue_create();
   cola_block = queue_create();
   cola_exit = queue_create();
+  interfaces_io = dictionary_create();
               // ------------------------------- //
 
               // --- inicialización de mutex --- //
@@ -109,53 +110,95 @@ int main(int argc, char *argv[]) {
            // espero clientes
   while (1) {
     int cliente_fd = esperar_cliente(server_fd);
-    log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d",
-             cliente_fd);
-    //===================================================
-    //---------PRUEBA DE MENSAJE CON IO
-    // recibo el cop
-    int cod_op = recibir_operacion(cliente_fd);
-    // si es un msg, lo leo y lo logueo
-    if (cod_op == MENSAJE) {
-      //recibir_mensaje(cliente_fd, logger_server);
-      // --- INICIO PRUEBA ---
-        log_info(logger_server, "Enviando orden de SLEEP de prueba a la IO...");
-        
-        // Armamos el paquete crudo tal cual lo espera tu IO
-        t_paquete* paquete_prueba = malloc(sizeof(t_paquete));
-        paquete_prueba->cop = IO_SLEEP; // Podés cambiarlo a IO_STDIN o IO_STDOUT para probar las otras
-        paquete_prueba->buffer = malloc(sizeof(t_buffer));
-        paquete_prueba->buffer->size = sizeof(int) * 2; // PID (4 bytes) + Tiempo (4 bytes)
-        paquete_prueba->buffer->stream = malloc(paquete_prueba->buffer->size);
-        
-        int pid_prueba = 404;
-        int parametro_prueba = 3000; // 3000 milisegundos (o 3000 caracteres a leer si pruebas STDIN)
-        
-        memcpy(paquete_prueba->buffer->stream, &pid_prueba, sizeof(int));
-        memcpy(paquete_prueba->buffer->stream + sizeof(int), &parametro_prueba, sizeof(int));
-        
-        enviar_paquete(paquete_prueba, cliente_fd);
-        eliminar_paquete(paquete_prueba);
+    log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d", cliente_fd);
 
-        // Esperamos a que la IO nos conteste el "FIN_IO"
-        int op_rta = recibir_operacion(cliente_fd);
-        if(op_rta == MENSAJE) {
-            recibir_mensaje(cliente_fd, logger_server);
-        } else if (op_rta == IO_STDIN || op_rta == IO_STDOUT) {
-            // Si probás STDIN/STDOUT, tu IO manda un paquete entero de vuelta, no solo un mensaje
-            int size_rta;
-            void* buffer_rta = recibir_buffer(&size_rta, cliente_fd);
-            log_info(logger_server, "La IO terminó y respondió!");
-            free(buffer_rta);
-        }
-        // --- FIN PRUEBA ---
-    } else {
-      log_warning(logger_server, "Operación no indentificada.");
-    }
+    int *fd_ptr = malloc(sizeof(int));
+    *fd_ptr = cliente_fd;
+
+    pthread_t hilo_cliente;
+    pthread_create(&hilo_cliente, NULL, atender_cliente, fd_ptr);
+    pthread_detach(hilo_cliente);
+    
   }
-  //===================================================//
   // libero memoria
   config_destroy(config_server);
   log_destroy(logger_server);
   return 0;
+}
+
+void *atender_cliente(void *arg){
+  int cliente_fd = *(int*) arg; // q p*nga es ese puntero???
+  free(arg);
+
+  while(1){
+    int cod_op = recibir_operacion(cliente_fd);
+
+    if (cod_op <= 0){
+      log_warning(logger_server, "El cliente con FD %d se desconectó.", cliente_fd);
+      // ver si agregar logica para identificar quien tiro la conexion
+      break;
+    }
+
+    switch (cod_op){
+    case MENSAJE:
+      recibir_mensaje(cliente_fd, logger_server);
+      break;
+    
+    // --- EJEMPLO: LA CPU NOS DEVUELVE UN PROCESO QUE PIDIÓ SLEEP ---
+            case IO_SLEEP: 
+                // 1. Recibiríamos el PCB actualizado y el tiempo de sleep de la CPU
+                t_pcb* pcb_recibido = recibir_pcb(cliente_fd);
+                int tiempo = recibir_entero(cliente_fd);
+
+                // 2. Usamos nuestra nueva función para bloquearlo
+                bloquear_proceso_por_io(pcb_recibido, "SLEEP");
+
+                // 3. Le mandamos la orden de trabajo al socket del módulo IO correspondiente
+                // enviar_orden_io_sleep(socket_io, pcb_recibido->pid, tiempo);
+                pthread_mutex_lock(&mutex_interfaces_io);
+                int *socket_destino  = dictionary_get(interfaces_io, "SLEEP");
+                pthread_mutex_unlock(&mutex_interfaces_io);
+
+                if (socket_destino != NULL){
+                  enviar_orden_io_sleep(*socket_destino, pcb_recibido->pid, tiempo);
+                  log_info(logger_server, "Orden de ")
+                }
+                
+                
+                // (Como la CPU quedó libre, tu planificador de corto plazo 
+                // automáticamente va a mandarle otro proceso gracias a los semáforos)
+                break;
+
+            // --- EJEMPLO: LA IO NOS AVISA QUE TERMINÓ SU TRABAJO ---
+            case FIN_IO:
+                // 1. Recibiríamos el PID del proceso que terminó su IO
+                // int pid_terminado = recibir_entero(cliente_fd);
+
+                // 2. Lo buscamos en la cola_block y lo sacamos
+                // t_pcb* pcb_a_despertar = sacar_de_cola_block(pid_terminado);
+
+                // 3. Usamos nuestra nueva función para devolverlo a READY
+                // desbloquear_proceso_de_io(pcb_a_despertar);
+                break;
+
+            case IDENTIFICACION_IO:
+                char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
+
+                int *socket_io = malloc(sizeof(int));
+                *socket_io = cliente_fd;
+
+                pthread_mutex_lock(&mutex_interfaces_io);
+                dictionary_put(interfaces_io, nombre_io, socket_io);
+                pthread_mutex_unlock(&mutex_interfaces_io);
+
+                log_info(logger_server, "Interfaz IO registrada: %s en el FD %d", nombre_io, cliente_fd);
+
+            default:
+                log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
+                break;
+        }
+  }
+
+  close(cliente_fd);
+  return NULL;
 }

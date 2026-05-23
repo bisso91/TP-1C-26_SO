@@ -43,7 +43,9 @@ typedef enum {
     IO_SLEEP, 
     IO_STDIN, 
     IO_STDOUT,
-    DISPATCH_PCB
+    DISPATCH_PCB,
+    FIN_IO, //HACE FALTA ESTE OPCODE?
+    IDENTIFICACION_IO
 } op_code;
 
 typedef struct {

@@ -17,6 +17,9 @@ pthread_mutex_t mutex_exit;
 
 sem_t sem_procesos_en_new;
 
+t_dictionary *interfaces_io;
+pthread_mutex_t mutex_interfaces_io;
+
 // ================ FUNCIONES ================ //
 void crear_proceso() {
   
@@ -83,4 +86,32 @@ void *planificador_corto_plazo_fifo(void *arg){
 
     return NULL;
 };
+
+void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall){
+    // logs obligatorios
+    log_info(logger_server, "## (%d) Solicitó syscall: %s", pcb->pid, nombre_syscall);
+    log_info(logger_server, "## (&d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+
+    pcb->estado = ESTADO_BLOCK;
+
+    pthread_mutex_lock(&mutex_block);
+    queue_push(cola_block, pcb);
+    pthread_mutex_unlock(&mutex_block);
+}
+
+void desbloquear_proceso_de_io(t_pcb *pcb){
+    // logs obligatorios
+    log_info(logger_server, "## (%d) finalizó IO y pasa a READY / SUSPENDED READY", pcb->pid);
+    log_info(logger_server, "## (%d) Pasa del estado BLOCKED al estado READY", cpb->pid);
+
+    pcb->estado = ESTADO_READY;
+
+    pthread_mutex_lock(&mutex_ready);
+    queue_push(cola_ready, pcb);
+    pthread_mutex_unlock(&mutex_ready);
+
+    sem_post(&sem_procesos_en_ready); //notifica al PCP que hay un proceso disponible
+}
+
+
 // =========================================== //
