@@ -1,4 +1,9 @@
 #include "scheduler-funciones.h"
+#include <commons/collections/queue.h>
+#include <commons/log.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdlib.h>
 
 // --- Definición de variables globales --- //
 t_log *logger_server;
@@ -75,7 +80,8 @@ void *planificador_corto_plazo_fifo(void *arg){
 
         if(socket_cpu_dispatch != -1){
             log_info(logger_server, "Despachando proceso PID: %d a la CPU...", pcb_a_ejecutar->pid);
-            enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch);
+            enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, DISPATCH_PCB);
+            //enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, op_code);
         } else {
             log_error(logger_server, "Error: La CPU no esta conectada aún");
         }
@@ -90,7 +96,7 @@ void *planificador_corto_plazo_fifo(void *arg){
 void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall){
     // logs obligatorios
     log_info(logger_server, "## (%d) Solicitó syscall: %s", pcb->pid, nombre_syscall);
-    log_info(logger_server, "## (&d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+    log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
 
     pcb->estado = ESTADO_BLOCK;
 
@@ -102,7 +108,7 @@ void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall){
 void desbloquear_proceso_de_io(t_pcb *pcb){
     // logs obligatorios
     log_info(logger_server, "## (%d) finalizó IO y pasa a READY / SUSPENDED READY", pcb->pid);
-    log_info(logger_server, "## (%d) Pasa del estado BLOCKED al estado READY", cpb->pid);
+    log_info(logger_server, "## (%d) Pasa del estado BLOCKED al estado READY", pcb->pid);
 
     pcb->estado = ESTADO_READY;
 
@@ -113,5 +119,20 @@ void desbloquear_proceso_de_io(t_pcb *pcb){
     sem_post(&sem_procesos_en_ready); //notifica al PCP que hay un proceso disponible
 }
 
+void finalizar_proceso(t_pcb *pcb, char *motivo){
+    // cambiar estado, si ya tenia uno (revisar que pasa cuando no trae uno)
+    pcb->estado = ESTADO_EXIT;
+
+    // proteger la cola
+    pthread_mutex_lock(&mutex_exit);
+    queue_push(cola_exit, pcb);
+    pthread_mutex_unlock(&mutex_exit);
+
+    // log obligatorio
+    log_info(logger_server, "## (%d) finalizó su ejecución con motivo de %s", pcb->pid, motivo);
+
+    sem_post(&sem_grado_multiprogramacion);
+
+}
 
 // =========================================== //

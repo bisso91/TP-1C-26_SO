@@ -174,7 +174,7 @@ void recibir_mensaje(int socket_cliente, t_log *logger) {
 }
   */
 // --- PCB --- //
-void enviar_pcb(t_pcb *pcb, int socket_cliente){
+void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code){
     // calculo tamaño del payload
     int size = sizeof(int) * 3; //PID, PC, estado
     void *stream = malloc(size);
@@ -190,7 +190,7 @@ void enviar_pcb(t_pcb *pcb, int socket_cliente){
 
     //
     t_paquete *paquete = crear_paquete();
-    paquete->cop = DISPATCH_PCB;
+    paquete->cop = op_code;
     agregar_a_paquete(paquete, stream, size);
     enviar_paquete(paquete, socket_cliente);
 
@@ -200,17 +200,17 @@ void enviar_pcb(t_pcb *pcb, int socket_cliente){
 
 t_pcb *recibir_pcb(int socket_cliente){
     t_pcb *pcb = malloc(sizeof(t_pcb));
-    int size;
-    int desplazamiento = 0;
+    int size_total;
 
-    void *stream = recibir_buffer(&size, socket_cliente);
+    void *stream = recibir_buffer(&size_total, socket_cliente); 
+    
+    int desplazamiento = sizeof(int);
 
     memcpy(&(pcb->pid), stream + desplazamiento, sizeof(int));
     desplazamiento += sizeof(int);
     memcpy(&(pcb->program_counter), stream + desplazamiento, sizeof(int));
     desplazamiento += sizeof(int);
     memcpy(&(pcb->estado), stream + desplazamiento, sizeof(int));
-    desplazamiento += sizeof(int);
 
     free(stream);
     return pcb;

@@ -8,6 +8,8 @@
 #include <pthread.h> // manejo de semaforos
 #include <scheduler-funciones.h>
 
+void *atender_cliente(void *arg);
+
 int main(int argc, char *argv[]) {
   saludar("kernel_scheduler");
 
@@ -145,30 +147,34 @@ void *atender_cliente(void *arg){
       break;
     
     // --- EJEMPLO: LA CPU NOS DEVUELVE UN PROCESO QUE PIDIÓ SLEEP ---
-            case IO_SLEEP: 
-                // 1. Recibiríamos el PCB actualizado y el tiempo de sleep de la CPU
-                t_pcb* pcb_recibido = recibir_pcb(cliente_fd);
-                int tiempo = recibir_entero(cliente_fd);
+            case IO_SLEEP: {
+              // 1. Recibiríamos el PCB actualizado y el tiempo de sleep de la CPU
+                //t_pcb* pcb_recibido = recibir_pcb(cliente_fd);
+                //int tiempo = recibir_entero(cliente_fd);
 
                 // 2. Usamos nuestra nueva función para bloquearlo
-                bloquear_proceso_por_io(pcb_recibido, "SLEEP");
+                //bloquear_proceso_por_io(pcb_recibido, "SLEEP");
 
                 // 3. Le mandamos la orden de trabajo al socket del módulo IO correspondiente
                 // enviar_orden_io_sleep(socket_io, pcb_recibido->pid, tiempo);
-                pthread_mutex_lock(&mutex_interfaces_io);
-                int *socket_destino  = dictionary_get(interfaces_io, "SLEEP");
-                pthread_mutex_unlock(&mutex_interfaces_io);
+                //pthread_mutex_lock(&mutex_interfaces_io);
+                //int *socket_destino  = dictionary_get(interfaces_io, "SLEEP");
+                //pthread_mutex_unlock(&mutex_interfaces_io);
 
-                if (socket_destino != NULL){
-                  enviar_orden_io_sleep(*socket_destino, pcb_recibido->pid, tiempo);
-                  log_info(logger_server, "Orden de ")
-                }
+                // if (socket_destino != NULL){
+                //  //enviar_orden_io_sleep(*socket_destino, pcb_recibido->pid, tiempo);
+                //  log_info(logger_server, "Orden de ");
+                //}
+
+                log_info(logger_server, "Recibí una petición de IO_SLEEP desde la CPU");
+
+                t_pcb *pcb_recibido = recibir_pcb(cliente_fd);
+
+                bloquear_proceso_por_io(pcb_recibido, "SLEEP");
                 
-                
-                // (Como la CPU quedó libre, tu planificador de corto plazo 
-                // automáticamente va a mandarle otro proceso gracias a los semáforos)
                 break;
 
+              }
             // --- EJEMPLO: LA IO NOS AVISA QUE TERMINÓ SU TRABAJO ---
             case FIN_IO:
                 // 1. Recibiríamos el PID del proceso que terminó su IO
@@ -182,7 +188,8 @@ void *atender_cliente(void *arg){
                 break;
 
             case IDENTIFICACION_IO:
-                char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
+                //char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
+                char *nombre_io = "SLEEP"; //harcodeo temporal
 
                 int *socket_io = malloc(sizeof(int));
                 *socket_io = cliente_fd;

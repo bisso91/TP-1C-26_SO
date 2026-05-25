@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     log_error(logger, "Error al conectar a Kernel Memory");
   }
 
-  //Conexion a Planificado Kernel
+  //Conexion a Planificador Kernel
 
   int conexion_scheduler = crear_conexion(ip_scheduler, puerto_scheduler);
   if (conexion_scheduler != -1) {
@@ -58,6 +58,19 @@ int main(int argc, char *argv[]) {
   } else {
     log_error(logger, "Error al conectar a Kernel Scheduler");
   }
+
+  // ===== PRUEBA ===== //
+  t_pcb *pcb_prueba = malloc(sizeof(t_pcb));
+  pcb_prueba->pid = 404;
+  pcb_prueba->program_counter = 15;
+  pcb_prueba->estado = ESTADO_EXEC;
+
+  log_info(logger, "Simulando interrupcion por IO_SLEEP. Enviando PCB al Scheduler...");
+
+  enviar_pcb(pcb_prueba, conexion_scheduler, IO_SLEEP);
+
+  free(pcb_prueba);
+  // ===== FIN PRUEBA ===== //
 
   // Conexion a Memory Stick
   int conexion_stick = crear_conexion(ip_memory_stick, puerto_memory_stick);

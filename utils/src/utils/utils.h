@@ -73,7 +73,7 @@ void recibir_mensaje(int socket_cliente, t_log *logger);
 
 // ---------------------------------------------------- //
 
-void enviar_pcb(t_pcb *pcb, int socket_cliente);
+void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code);
 t_pcb *recibir_pcb(int socket_cliente);
 
 

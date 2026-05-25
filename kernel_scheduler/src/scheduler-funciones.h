@@ -51,6 +51,7 @@ extern int socket_cpu_dispatch;
 void crear_proceso();
 void *planificador_largo_plazo(void *arg);
 void *planificador_corto_plazo_fifo(void *arg);
+void finalizar_proceso(t_pcb *pcb, char * motivo);
 
 // --- FUNCIONES PARA MANEJO DE IO Y BLOQUEDOS ---//
 void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall);
