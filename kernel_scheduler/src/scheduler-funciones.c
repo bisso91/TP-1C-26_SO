@@ -176,8 +176,27 @@ void *temporizador_quantum(void *arg){
 
 void *planificador_corto_plazo_rr(void *arg){
     while(1){
-        
+        sem_wait(&sem_procesos_en_ready);
+
+        pthread_mutex_lock(&mutex_ready);
+        t_pcb *pcb_a_ejecutar = queue_pop(cola_ready);
+        pthread_mutex_unlock(&mutex_ready);
+
+        pcb_a_ejecutar->estado = ESTADO_EXEC;
+        log_info(logger_server, "## (PPID %d) Pasa a estada EXEC (round robin)", pcb_a_ejecutar->pid);
+
+        pthread_t hilo_timer;
+        int *pid_prt = malloc(sizeof(int));
+        *pid_prt = pcb_a_ejecutar->pid;
+        pthread_create(&hilo_timer, NULL, temporizador_quantum, pid_prt);
+        pthread_detach(hilo_timer);
+
+        // Enviamos el PCB a la CPU para que trabaje
+        // enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, EJECUTAR_PROCESO);
     }
-    
+    returno NULL;
 }
+
+// --- MANEJO DE RECURSOS COMPARTIDOS (MUTEX) --- //
+
 // =========================================== //
