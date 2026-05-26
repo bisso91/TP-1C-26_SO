@@ -8,6 +8,14 @@
 #include <pthread.h> // manejo de semaforos
 #include <scheduler-funciones.h>
 
+// instancias de variables globales
+char *algoritmo_de_planificacion;
+int quantum;
+t_dictionary recursos_sistema;
+
+int socket_cpu_dispatch = -1;
+int socket_cpu_interrupt = -1;
+
 void *atender_cliente(void *arg);
 
 int main(int argc, char *argv[]) {
@@ -56,40 +64,7 @@ int main(int argc, char *argv[]) {
   if (logger_server == NULL) {
     printf("ERROR: No se pudo crear el logger\n");
     exit(1);
-  }
-
-  // --- INICIALIZACIÓN DE COLAS / MUTEX / SEMAFOROS --- //
-              // --- inicialización de colas --- //
-  cola_new = queue_create();
-  cola_ready = queue_create();
-  cola_block = queue_create();
-  cola_exit = queue_create();
-  interfaces_io = dictionary_create();
-              // ------------------------------- //
-
-              // --- inicialización de mutex --- //
-  pthread_mutex_init(&mutex_new, NULL);
-  pthread_mutex_init(&mutex_ready, NULL);
-  pthread_mutex_init(&mutex_block, NULL);
-  pthread_mutex_init(&mutex_exit, NULL);
-              // ------------------------------- //
-              // --- semaforos --- //
-  sem_init(&sem_grado_multiprogramacion, 0, 3);
-  sem_init(&sem_procesos_en_ready, 0, 0);
-  sem_init(&sem_procesos_en_new, 0, 0);
-
-              // --- inicialización de hilos --- //
-  pthread_t hilo_plp;
-  pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
-  pthread_detach(hilo_plp);
-
-
-  pthread_t hilo_pcp;
-  pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
-  pthread_detach(hilo_pcp);
-  
-  // -------------------------------------------------- //   
-    
+  }   
   // -------------------------------------------------- //
 
   if (logger_server == NULL) {
@@ -126,6 +101,69 @@ int main(int argc, char *argv[]) {
     pthread_detach(hilo_cliente);
     
   }
+
+  // --- lectura de archivo de config para RR y recursos --- //
+  algoritmo_de_planificacion = config_get_string_value(config_server, "ALGORITMO_PLANIFICIACION");
+  
+  if(config_has_property(config_server, "QUANTUM")){
+    quantum = config_get_int_value(config_server, "QUANTUM");
+  }
+
+  char* *nombres_recursos = config_get_array_value(config_server, "RECURSOS");
+  char* *instancias_recursos = config_get_array_value(config_server, "INSTANCIAS_RECURSOS");
+
+  // inicialización de diccionario de mutex
+  inicializar_recursos(nombres_recursos, instancias_recursos);
+
+  // libero memoria de los recursos
+  string_array_destroy(nombres_recursos);
+  string_array_destroy(instancias_recursos);
+  // ------------------------------------------------------ //
+
+  // --- INICIALIZACIÓN DE COLAS / MUTEX / SEMAFOROS --- //
+              // --- inicialización de colas --- //
+  cola_new = queue_create();
+  cola_ready = queue_create();
+  cola_block = queue_create();
+  cola_exit = queue_create();
+  interfaces_io = dictionary_create();
+              // ------------------------------- //
+
+              // --- inicialización de mutex --- //
+  pthread_mutex_init(&mutex_new, NULL);
+  pthread_mutex_init(&mutex_ready, NULL);
+  pthread_mutex_init(&mutex_block, NULL);
+  pthread_mutex_init(&mutex_exit, NULL);
+              // ------------------------------- //
+              // --- semaforos --- //
+  sem_init(&sem_grado_multiprogramacion, 0, 3);
+  sem_init(&sem_procesos_en_ready, 0, 0);
+  sem_init(&sem_procesos_en_new, 0, 0);
+
+              // --- inicialización de hilos --- //
+  pthread_t hilo_plp;
+  pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
+  pthread_detach(hilo_plp);
+
+
+  pthread_t hilo_pcp;
+  pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
+  pthread_detach(hilo_pcp);
+  
+  // -------------------------------------------------- // 
+
+  // --- Elección del hilo de corto plazo (PCP) --- //
+  pthread_t hilo_pcp;
+  if (strcmp(algoritmo_de_planificacion, "FIFO") == 0){
+    pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
+  } else if (strcmp(algoritmo_de_planificacion, "RR") == 0){ 
+    pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_rr, NULL);
+  } else {
+    log_error(logger_server, "Algoritmo desconocido");
+    return 1;
+  }
+  pthread_detach(hilo_pcp);  
+
   // libero memoria
   config_destroy(config_server);
   log_destroy(logger_server);
@@ -149,38 +187,26 @@ void *atender_cliente(void *arg){
     case MENSAJE:
       recibir_mensaje(cliente_fd, logger_server);
       break;
-    
-    // --- EJEMPLO: LA CPU NOS DEVUELVE UN PROCESO QUE PIDIÓ SLEEP ---
-            case IO_SLEEP: {
-              // 1. Recibiríamos el PCB actualizado y el tiempo de sleep de la CPU
-                //t_pcb* pcb_recibido = recibir_pcb(cliente_fd);
-                //int tiempo = recibir_entero(cliente_fd);
+    case IO_GENERICA: {
+      t_pcb *pcb_recibido = recibir_pcb(cliente_fd);
+      char *nombre_interfaz = recibir_mensaje(cliente_fd, logger_server);
 
-                // 2. Usamos nuestra nueva función para bloquearlo
-                //bloquear_proceso_por_io(pcb_recibido, "SLEEP");
+      log_info(logger_server, "## (PID %d) Pasa de EXEC a BLOCKED (Esperando a %s )", pcb_recibido->pid, nombre_interfaz);
+      bloquear_proceso_por_io(pcb_recibido, nombre_interfaz);
 
-                // 3. Le mandamos la orden de trabajo al socket del módulo IO correspondiente
-                // enviar_orden_io_sleep(socket_io, pcb_recibido->pid, tiempo);
-                //pthread_mutex_lock(&mutex_interfaces_io);
-                //int *socket_destino  = dictionary_get(interfaces_io, "SLEEP");
-                //pthread_mutex_unlock(&mutex_interfaces_io);
+      pthread_mutex_lock(&mutex_interfaces_io);
+      int *socket_destino = dictionary_get(interfaces_io, nombre_interfaz);
+      pthread_mutex_unlock(&mutex_interfaces_io);
 
-                // if (socket_destino != NULL){
-                //  //enviar_orden_io_sleep(*socket_destino, pcb_recibido->pid, tiempo);
-                //  log_info(logger_server, "Orden de ");
-                //}
-
-                log_info(logger_server, "Recibí una petición de IO_SLEEP desde la CPU");
-
-                t_pcb *pcb_recibido = recibir_pcb(cliente_fd);
-
-                bloquear_proceso_por_io(pcb_recibido, "SLEEP");
-                
-                break;
-
-              }
-            // --- EJEMPLO: LA IO NOS AVISA QUE TERMINÓ SU TRABAJO ---
-            case FIN_IO:{
+      if(socket_destino != NULL){
+        //enviar_peticion_io(...);
+      } else {
+        log_error(logger_server, "Interfaz %s no conectada.", nombre_interfaz);
+      }
+      free(nombre_interfaz);
+      break;
+    }
+    case FIN_IO:{
               // recibo el PID del proceso que terminó
               int pid_terminado = recibir_entero(cliente_fd);
 
@@ -205,7 +231,7 @@ void *atender_cliente(void *arg){
                 }
                 break;
             }
-              
+            /*  
             case IDENTIFICACION_IO:
                 //char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
                 char *nombre_io = "SLEEP"; //harcodeo temporal
@@ -218,10 +244,41 @@ void *atender_cliente(void *arg){
                 pthread_mutex_unlock(&mutex_interfaces_io);
 
                 log_info(logger_server, "Interfaz IO registrada: %s en el FD %d", nombre_io, cliente_fd);
+                */
+    // --- CASOS PARA RECURSOS --- //
+    case WAIT_RECURSO: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      char *nombre_recurso = recibir_mensaje(cliente_fd, logger_server);
+      solicitar_recurso_wait(pcb, nombre_recurso, cliente_fd);
+      free(nombre_recurso);
+      break;
+    }
+    case SIGNAL_RECURSO: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      char *nombre_recurso = recibir_mensaje(cliente_fd, logger_server);
+      liberar_recurso_signal(pcb, nombre_recurso, cliente_fd);
+      free(nombre_recurso);
+      break; 
+    }
+    // ---------------------------- //
+    // --- DESALOJO POR RR --- //
+    case FIN_QUANTUM: {
+      t_pcb *pcb_desalojado = recibir_pcb(cliente_fd);
+      log_info(logger_server, "## (PID %d) Desalojado por fin de Quantum. Pasando a READY.", pcb_desalojado->pid);
 
-            default:
-                log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
-                break;
+      pcb_desalojado->estado = ESTADO_READY;
+
+      pthread_mutex_lock(&mutex_ready);
+      queue_push(cola_ready, pcb_desalojado);
+      pthread_mutex_unlock(&mutex_ready);
+
+      sem_post(&sem_procesos_en_ready);
+      break;
+    }
+                
+    default:
+        log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
+        break;
         }
   }
 

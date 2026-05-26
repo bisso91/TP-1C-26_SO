@@ -39,10 +39,11 @@ typedef struct{
 // --- COSAS DE IO --- //
 typedef enum {
     MENSAJE,
-    PAQUETE, 
-    IO_SLEEP, 
-    IO_STDIN, 
-    IO_STDOUT,
+    PAQUETE,
+    IO_GENERICA,//reemplaza a: IO_SLEEP, IO_STDIN, IO_STDOUT
+    WAIT_RECURSO, // opcode de semaforos  usados para sincronización
+    SIGNAL_RECURSO, // opcode de semaforos usados para sincronización
+    FIN_QUANTUM,
     DISPATCH_PCB,
     FIN_IO, //HACE FALTA ESTE OPCODE?
     IDENTIFICACION_IO

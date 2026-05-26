@@ -154,4 +154,30 @@ t_pcb *sacar_de_cola_block(int pid){
     pthread_mutex_unlock(&mutex_block);
     return pcb_encontrado;
 }
+
+// --- LOGICA RR Y TEMPORIZADOR --- //
+void *temporizador_quantum(void *arg){
+    int pid_en_ejecucion = *(int*)arg;
+    free(arg);
+
+    usleep(quantum * 1000);
+
+    if(socket_cpu_interrupt != -1){
+        int op_code = INTERRUPCION_QUANTUM;
+        send(socket_cpu_interrupt, op_code, sizeof(int), 0);
+        enviar_entero(socket_cpu_interrupt, pid_en_ejecucion);
+        log_info(logger_server, "Interrupcion de quantum enviada para PID %d", pid_en_ejecucion);
+
+        // NOTA: Si el proceso hizo una I/O ANTES de que termine este hilo, 
+        // la CPU deberá ignorar esta interrupción leyendo el PID.
+        return NULL;
+    }
+}
+
+void *planificador_corto_plazo_rr(void *arg){
+    while(1){
+        
+    }
+    
+}
 // =========================================== //
