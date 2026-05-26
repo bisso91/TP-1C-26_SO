@@ -8,6 +8,9 @@
 int main(int argc, char *argv[]) {
   saludar("memory_stick");
 
+// En el main solo voy a invocar la funcion principal, comento el resto dsp lo modifico
+
+	  /*
   //validación de argunmentos
   if (argc < 3){
     printf("Error: Faltan argumentos. Uso: ./bin/memory_stick [Config] [Tamaño]\n");
@@ -84,7 +87,7 @@ int main(int argc, char *argv[]) {
     log_info(logger_server, "## Nueva CPU Conectada - FD del socket: %d",
              cpu_fd);
   }
-
+*/
   // libero memoria
   config_destroy(config_server);
   log_destroy(logger_server);

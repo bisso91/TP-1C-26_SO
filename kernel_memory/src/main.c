@@ -6,6 +6,10 @@
 #include <utils/utils.h>
 #include <commons/string.h>
 
+
+// Lo mismo que el stick, aca solo invoco la funcion principal, el resto vuela
+
+/*
 //prox sacar esto de aca y ponerlo en un .h aparte
 void atender_cliente_mock(int cliente_fd, t_log* logger, t_dictionary* diccionario, char* basepath);
 void procesar_iniciar_proceso(int cliente_fd, t_log* logger, t_dictionary* diccionario, char* basepath);
@@ -168,3 +172,4 @@ void procesar_pedir_instruccion(int cliente_fd, t_log* logger, t_dictionary* dic
 
     free(pid_string);
 }
+*/
