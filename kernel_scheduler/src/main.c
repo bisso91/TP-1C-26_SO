@@ -52,8 +52,12 @@ int main(int argc, char *argv[]) {
   //===================================================//
   //     CONFIGURACION DEL PLANIFICADOR COMO SERVER    //
   //===================================================//
-  t_log *logger_server = log_create("kernel_scheduler.log", "KERNEL_SCHEDULER",
-                                    true, LOG_LEVEL_INFO);
+  logger_server = log_create("kernel_scheduler.log", "KERNEL_SCHEDULER",true, LOG_LEVEL_INFO);
+  if (logger_server == NULL) {
+    printf("ERROR: No se pudo crear el logger\n");
+    exit(1);
+  }
+
   // --- INICIALIZACIÓN DE COLAS / MUTEX / SEMAFOROS --- //
               // --- inicialización de colas --- //
   cola_new = queue_create();
