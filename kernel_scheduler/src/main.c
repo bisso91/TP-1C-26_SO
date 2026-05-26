@@ -180,17 +180,32 @@ void *atender_cliente(void *arg){
 
               }
             // --- EJEMPLO: LA IO NOS AVISA QUE TERMINÓ SU TRABAJO ---
-            case FIN_IO:
-                // 1. Recibiríamos el PID del proceso que terminó su IO
-                // int pid_terminado = recibir_entero(cliente_fd);
+            case FIN_IO:{
+              // recibo el PID del proceso que terminó
+              int pid_terminado = recibir_entero(cliente_fd);
 
-                // 2. Lo buscamos en la cola_block y lo sacamos
-                // t_pcb* pcb_a_despertar = sacar_de_cola_block(pid_terminado);
+              // lo saco de la cola de BLOCKED
+              t_pcb *pcb_a_desbloquear = sacar_de_cola_block(pid_terminado);
 
-                // 3. Usamos nuestra nueva función para devolverlo a READY
-                // desbloquear_proceso_de_io(pcb_a_despertar);
+              if(pcb_a_desbloquear != NULL){
+                log_info(logger_server, "## (PID: %d) Desbloqueado. Pasando a READY", pcb_a_desbloquear->pid);
+
+                // cambio el estado
+                pcb_a_desbloquear->estado = ESTADO_READY;
+
+                // lo paso a la cola de READY
+                pthread_mutex_lock(&mutex_ready);
+                queue_push(cola_ready, pcb_a_desbloquear);
+                pthread_mutex_unlock(&mutex_ready);
+
+                // notifico al planificador de corto plazo
+                sem_post(&sem_procesos_en_ready);
+                } else {
+                  log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK", pid_terminado);
+                }
                 break;
-
+            }
+              
             case IDENTIFICACION_IO:
                 //char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
                 char *nombre_io = "SLEEP"; //harcodeo temporal

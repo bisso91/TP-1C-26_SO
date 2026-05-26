@@ -58,6 +58,11 @@ typedef struct {
   t_buffer *buffer;
 } t_paquete;
 
+// fn' asociadas a paquetes y sockets
+
+void enviar_entero(int socket_cliente, int numero);
+int recibir_entero(int socket_cliente);
+
 
 // fn's de paquetes
 void *serializar_paquete(t_paquete *paquete, int bytes); // la pongo arriba de enviar mensaje para que la detecte antes de usarla

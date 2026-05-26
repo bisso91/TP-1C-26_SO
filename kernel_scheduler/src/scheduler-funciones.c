@@ -135,4 +135,23 @@ void finalizar_proceso(t_pcb *pcb, char *motivo){
 
 }
 
+t_pcb *sacar_de_cola_block(int pid){
+    t_pcb *pcb_encontrado = NULL;
+
+    pthread_mutex_lock(&mutex_block);
+
+    // recorro la cola buscando el PID
+    int size = queue_size(cola_block);
+    for (int i = 0; i < size; i++) {
+        t_pcb *pcb_aux = queue_pop(cola_block);
+
+        if (pcb_aux->pid == pid) {
+            pcb_encontrado = pcb_aux;
+        } else {
+            queue_push(cola_block, pcb_aux);
+        }
+    }
+    pthread_mutex_unlock(&mutex_block);
+    return pcb_encontrado;
+}
 // =========================================== //

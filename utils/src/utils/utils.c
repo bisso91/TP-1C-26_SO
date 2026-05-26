@@ -173,6 +173,19 @@ void recibir_mensaje(int socket_cliente, t_log *logger) {
   free(buffer);
 }
   */
+// --- --- //
+
+void enviar_entero(int socket_cliente, int numero){
+  send(socket_cliente, &numero, sizeof(int), 0);
+}
+
+int recibir_entero(int socket_cliente){
+  int numero;
+
+  recv(socket_cliente, &numero, sizeof(int), MSG_WAITALL); //MSG_WAITALL asegura que se lean todos los bytes del int antes de seguir
+  return numero;
+}
+
 // --- PCB --- //
 void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code){
     // calculo tamaño del payload
