@@ -44,6 +44,7 @@ typedef enum {
     WAIT_RECURSO, // opcode de semaforos  usados para sincronización
     SIGNAL_RECURSO, // opcode de semaforos usados para sincronización
     FIN_QUANTUM,
+    INTERRUPCION_QUANTUM,
     DISPATCH_PCB,
     FIN_IO, //HACE FALTA ESTE OPCODE?
     IDENTIFICACION_IO
