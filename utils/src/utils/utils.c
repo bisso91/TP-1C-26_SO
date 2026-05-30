@@ -4,69 +4,91 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-
 /*--------------------
 fns server
 ----------------------*/
 
-int iniciar_servidor(char *ip, char *puerto){
-    int socket_servidor;
-    struct addrinfo hints, *servinfo;
+int iniciar_servidor(char *puerto, t_log *logger_instancia) {
+  struct addrinfo hints, *server_info;
+  const int enable = 1;
+  int fd_escucha;
+  int err;
 
-    memset(&hints, 0 , sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+  log_trace(logger_instancia, "Estoy creando un socket en el puerto %s",
+            puerto);
 
-    getaddrinfo(ip, puerto, &hints, &servinfo);
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
 
-    //socket de escucha
-    socket_servidor = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
+  err = getaddrinfo(NULL, puerto, &hints, &server_info);
+  if (err) {
+    // Se agregó gai_strerror(err) para que imprima la causa exacta del error
+    // DNS/IP
+    log_error(logger_instancia, "Error en getaddrinfo: %s", gai_strerror(err));
+    exit(EXIT_FAILURE);
+  }
 
+  fd_escucha = socket(server_info->ai_family, server_info->ai_socktype,
+                      server_info->ai_protocol);
+  if (fd_escucha < 0) {
+    log_error(logger_instancia, "Error creando Socket...");
+    exit(EXIT_FAILURE);
+  }
 
-    //bind del puerto
-    bind(socket_servidor, servinfo->ai_addr, servinfo->ai_addrlen);
+  if (setsockopt(fd_escucha, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) <
+      0)
+    log_warning(logger_instancia,
+                "Error al setear la dirección del socket como REUSABLE");
 
-    //escucha de conexiones
-    listen(socket_servidor, SOMAXCONN);
+  if (setsockopt(fd_escucha, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) <
+      0)
+    log_warning(logger_instancia,
+                "Error al setear el puerto del socket como REUSABLE");
 
-    freeaddrinfo(servinfo);
+  bind(fd_escucha, server_info->ai_addr, server_info->ai_addrlen);
+  log_trace(logger_instancia, "Socket creado satisfactoriamente");
 
-    return socket_servidor;
+  listen(fd_escucha, SOMAXCONN);
+  log_trace(logger_instancia, "Socket listo para escuchar a mi cliente");
+
+  freeaddrinfo(server_info);
+
+  return fd_escucha;
 }
 
-int esperar_cliente(int socket_servidor){
-    
-    //aceptacion del cliente nuevo
-    int socket_cliente = accept(socket_servidor,NULL, NULL);
-    return socket_cliente;
+int esperar_cliente(int socket_servidor) {
+
+  // aceptacion del cliente nuevo
+  int socket_cliente = accept(socket_servidor, NULL, NULL);
+  return socket_cliente;
 }
 
 /*--------------------
 fns client
 ----------------------*/
 
-int crear_conexion(char *ip, char *puerto){
-    struct addrinfo hints, *server_info;
+int crear_conexion(char *ip, char *puerto) {
+  struct addrinfo hints, *server_info;
 
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
 
-    getaddrinfo(ip, puerto, &hints, &server_info);
+  getaddrinfo(ip, puerto, &hints, &server_info);
 
-    //creacion del socket
-    int socket_cliente = socket(server_info->ai_family, server_info->ai_socktype, server_info->ai_protocol);
+  // creacion del socket
+  int socket_cliente = socket(server_info->ai_family, server_info->ai_socktype,
+                              server_info->ai_protocol);
 
-    //conexion al server
-    connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen);
+  // conexion al server
+  connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen);
 
-    freeaddrinfo(server_info);
+  freeaddrinfo(server_info);
 
-    return socket_cliente;
+  return socket_cliente;
 }
 
-void liberar_conexion(int socket_cliente){
-    close(socket_cliente);
-}
+void liberar_conexion(int socket_cliente) { close(socket_cliente); }
