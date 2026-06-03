@@ -144,12 +144,7 @@ int main(int argc, char *argv[]) {
   pthread_t hilo_plp;
   pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
   pthread_detach(hilo_plp);
-
-
-  pthread_t hilo_pcp;
-  pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
-  pthread_detach(hilo_pcp);
-  
+ 
   // -------------------------------------------------- // 
 
   // --- Elección del hilo de corto plazo (PCP) --- //
@@ -275,7 +270,26 @@ void *atender_cliente(void *arg){
       sem_post(&sem_procesos_en_ready);
       break;
     }
-                
+    case FIN_PROCESO: {
+      t_pcb *pcb_finalizado = recibir_pcb(cliente_fd);
+      finalizar_proceso(pcb_finalizado, "Finalización por CPU");
+      break;
+    }
+    case SEGMENTATION_FAULT: {
+      t_pcb *pcb_error = recibir_pcb(cliente_fd);
+      finalizar_proceso(pcb_error, "Finalización por Fault de Segmentación");
+      break;
+    }
+    case IDENTIFICACION_CPU_DISPATCH: {
+      socket_cpu_dispatch = cliente_fd;
+      log_info(logger_server, "CPU Dispatch conectada con FD %d", socket_cpu_dispatch);
+      break;
+    }
+    case IDENTIFICACION_CPU_INTERRUPT: {
+      socket_cpu_interrupt = cliente_fd;
+      log_info(logger_server, "CPU Interrupt conectada con FD %d", socket_cpu_interrupt);
+      break;
+    }                
     default:
         log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
         break;
