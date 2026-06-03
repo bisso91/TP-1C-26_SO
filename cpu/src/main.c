@@ -52,6 +52,17 @@ while (1) {
          log_warning(logger_cpu, "¡Interrupción recibida! Desalojando...");
          // Lógica para frenar el ciclo actual
          break;
+    default:
+      log_error(logger_cpu, "Operación desconocida: %d", cod_op);
+      break;
+    }
+  }
+  // Conexion a Memory Stick
+  int conexion_stick = crear_conexion(ip_memory_stick, puerto_memory_stick);
+  if (conexion_stick != -1) {
+    log_info(logger, "## Conectado a Memory Stick");
+  } else {
+    log_error(logger, "Error al conectar a Memory Stick");
 
        case -1:
          log_error(logger_cpu, "El Scheduler se desconectó. Terminando CPU.");
