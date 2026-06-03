@@ -21,14 +21,14 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  //extraer valores de ip y puerto
+  // extraer valores de ip y puerto
   char *ip = config_get_string_value(config, "IP_MEMORIA");
   char *puerto = config_get_string_value(config, "PUERTO_ESCUCHA");
 
-
   // iniciar server con ip y puerto
-  int server_fd = iniciar_servidor(ip, puerto);
-  log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...", ip, puerto);
+  int server_fd = iniciar_servidor(puerto, logger);
+  log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...",
+           ip, puerto);
 
   // espero clientes
   while (1) {
@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
              cliente_fd);
   }
 
-  //libero memoria
+  // libero memoria
   config_destroy(config);
   log_destroy(logger);
 

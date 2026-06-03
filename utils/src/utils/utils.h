@@ -29,7 +29,7 @@ typedef enum {
 } op_code;
 
 // fn server
-int iniciar_servidor(char *ip, char *puerto);
+int iniciar_servidor(char *ip, t_log *logger_instancia);
 int esperar_cliente(int socket_servidor);
 
 // fn client

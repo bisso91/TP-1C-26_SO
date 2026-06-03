@@ -3,6 +3,7 @@
 
 #include <commons/config.h>
 #include <commons/log.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,6 +19,8 @@ typedef struct {
   char *ip_memory_stick;
   char *puerto_memory_stick;
   t_log_level log_level;
+  char *puerto_escucha_dispatch;
+  char *puerto_escucha_interrupt;
 } t_config_cpu;
 
 // Estructura para los registros de la CPU (Basado en página 19 del PDF)
@@ -35,9 +38,23 @@ typedef struct {
   uint32_t DI; // Dirección lógica de destino
 } t_registros;
 
+// Agrego los extern
+extern t_log *logger_cpu;
+extern t_config *config_plana;
+extern t_config_cpu config_cpu;
+
+extern int kernel_interrupt_fd;
+extern uint32_t interrupted_pid;
+extern int fd_memory;
+extern int fd_scheduler;
+extern int fd_interrupt;
+extern int fd_dispatch;
+
+// --- PROTOTIPOS ---
 int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
 bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
                           t_log *logger);
 bool inicializar_registros(t_registros *registros, t_log *logger);
+int recibir_operacion(int socket_cliente, t_log *logger);
 
 #endif
