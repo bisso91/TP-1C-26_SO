@@ -194,7 +194,7 @@ void *planificador_corto_plazo_rr(void *arg){
         // Enviamos el PCB a la CPU para que trabaje
         // enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, EJECUTAR_PROCESO);
     }
-    returno NULL;
+    return NULL;
 }
 
 // --- MANEJO DE RECURSOS COMPARTIDOS (MUTEX) --- //
@@ -204,9 +204,9 @@ void inicializar_recursos(char **nombres, char **instancias){
 
     for (int i = 0; nombres[1] != NULL; i++){
         t_recurso * recurso_nuevo = malloc(sizeof(t_recurso));
-        recurso_nuevo->instancias = atoi[instancias[i]];
+        recurso_nuevo->instancias = atoi(instancias[i]);
         recurso_nuevo->cola_bloqueados = queue_create();
-        pthread_mutex_ini(&(recurso_nuevo->mutex_recurso), NULL);
+        pthread_mutex_init(&(recurso_nuevo->mutex_recurso), NULL);
 
         dictionary_put(recursos_sistema, nombres[i], recurso_nuevo);
         log_info(logger_server, "Recurso inicializado: %s con %d instancias.", nombres[i], recurso_nuevo->instancias);
@@ -239,7 +239,7 @@ void solicitar_recurso_wait(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
     pthread_mutex_unlock(&(recurso->mutex_recurso));
 }
 void liberar_recurso_signal(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
-    t_recurso *recurso = distionary_get(recursos_sistema, nombre_recurso);
+    t_recurso *recurso = dictionary_get(recursos_sistema, nombre_recurso);
 
     if(recurso == NULL){
         log_error(logger_server, "El recurso %s no existe", nombre_recurso);
