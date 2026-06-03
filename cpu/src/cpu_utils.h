@@ -1,0 +1,43 @@
+#ifndef CPU_UTILS_H_
+#define CPU_UTILS_H_
+
+#include <commons/config.h>
+#include <commons/log.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <utils/utils.h>
+
+// Defino estructura del .config
+typedef struct {
+  char *ip_memory;
+  char *puerto_memory;
+  char *ip_scheduler;
+  char *puerto_scheduler;
+  char *ip_memory_stick;
+  char *puerto_memory_stick;
+  t_log_level log_level;
+} t_config_cpu;
+
+// Estructura para los registros de la CPU (Basado en página 19 del PDF)
+typedef struct {
+  uint32_t PC; // Program Counter
+  uint8_t AX;  // Registros de 1 byte
+  uint8_t BX;
+  uint8_t CX;
+  uint8_t DX;
+  uint32_t EAX; // Registros de 4 bytes
+  uint32_t EBX;
+  uint32_t ECX;
+  uint32_t EDX;
+  uint32_t SI; // Dirección lógica de origen
+  uint32_t DI; // Dirección lógica de destino
+} t_registros;
+
+int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
+bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
+                          t_log *logger);
+bool inicializar_registros(t_registros *registros, t_log *logger);
+
+#endif
