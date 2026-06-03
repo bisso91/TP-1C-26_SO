@@ -8,7 +8,6 @@
 // --- Definición de variables globales --- //
 t_log *logger_server;
 int generador_pid = 1;
-int socket_cpu_dispatch = -1;
 
 t_queue *cola_new;
 t_queue *cola_ready;
@@ -164,7 +163,7 @@ void *temporizador_quantum(void *arg){
 
     if(socket_cpu_interrupt != -1){
         int op_code = INTERRUPCION_QUANTUM;
-        send(socket_cpu_interrupt, op_code, sizeof(int), 0);
+        send(socket_cpu_interrupt, &op_code, sizeof(int), 0);
         enviar_entero(socket_cpu_interrupt, pid_en_ejecucion);
         log_info(logger_server, "Interrupcion de quantum enviada para PID %d", pid_en_ejecucion);
 
@@ -172,6 +171,7 @@ void *temporizador_quantum(void *arg){
         // la CPU deberá ignorar esta interrupción leyendo el PID.
         return NULL;
     }
+    return NULL;
 }
 
 void *planificador_corto_plazo_rr(void *arg){

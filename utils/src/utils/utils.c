@@ -330,3 +330,9 @@ void recibir_mensaje(int socket_cliente, t_log *logger) {
   log_info(logger, "Mensaje recibido: %s", buffer);
   free(buffer);
 }
+
+char* recibir_string(int socket_cliente) {
+    int size;
+    char *buffer = recibir_buffer(&size, socket_cliente);
+    return buffer;
+}

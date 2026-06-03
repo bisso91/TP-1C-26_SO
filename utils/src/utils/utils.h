@@ -46,8 +46,15 @@ typedef enum {
     FIN_QUANTUM,
     INTERRUPCION_QUANTUM,
     DISPATCH_PCB,
-    FIN_IO, //HACE FALTA ESTE OPCODE?
-    IDENTIFICACION_IO
+    IDENTIFICACION_IO,
+    FIN_PROCESO,
+    SEGMENTATION_FAULT,
+    IDENTIFICACION_CPU_DISPATCH,
+    IDENTIFICACION_CPU_INTERRUPT,
+    IO_SLEEP,
+    IO_STDIN,
+    IO_STDOUT,
+    FIN_IO
 } op_code;
 
 typedef struct {
@@ -96,5 +103,6 @@ int recibir_operacion(int socket_cliente);
 void *recibir_buffer(int *size, int socket_cliente);
 void recibir_mensaje(int socket_cliente, t_log *logger);
 
+char* recibir_string(int socket_cliente);
 
 #endif /* UTILS_H_ */

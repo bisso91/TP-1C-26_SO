@@ -1,5 +1,6 @@
 #include <commons/config.h>
 #include <commons/log.h>
+#include <commons/string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <utils/hello.h>
@@ -11,7 +12,7 @@
 // instancias de variables globales
 char *algoritmo_de_planificacion;
 int quantum;
-t_dictionary recursos_sistema;
+t_dictionary *recursos_sistema;
 
 int socket_cpu_dispatch = -1;
 int socket_cpu_interrupt = -1;
@@ -184,7 +185,7 @@ void *atender_cliente(void *arg){
       break;
     case IO_GENERICA: {
       t_pcb *pcb_recibido = recibir_pcb(cliente_fd);
-      char *nombre_interfaz = recibir_mensaje(cliente_fd, logger_server);
+      char *nombre_interfaz = recibir_string(cliente_fd);
 
       log_info(logger_server, "## (PID %d) Pasa de EXEC a BLOCKED (Esperando a %s )", pcb_recibido->pid, nombre_interfaz);
       bloquear_proceso_por_io(pcb_recibido, nombre_interfaz);
@@ -243,14 +244,14 @@ void *atender_cliente(void *arg){
     // --- CASOS PARA RECURSOS --- //
     case WAIT_RECURSO: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
-      char *nombre_recurso = recibir_mensaje(cliente_fd, logger_server);
+      char *nombre_recurso = recibir_string(cliente_fd);
       solicitar_recurso_wait(pcb, nombre_recurso, cliente_fd);
       free(nombre_recurso);
       break;
     }
     case SIGNAL_RECURSO: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
-      char *nombre_recurso = recibir_mensaje(cliente_fd, logger_server);
+      char *nombre_recurso = recibir_string(cliente_fd);
       liberar_recurso_signal(pcb, nombre_recurso, cliente_fd);
       free(nombre_recurso);
       break; 
@@ -295,7 +296,6 @@ void *atender_cliente(void *arg){
         break;
         }
   }
-
   close(cliente_fd);
   return NULL;
 }

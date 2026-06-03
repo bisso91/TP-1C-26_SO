@@ -56,6 +56,7 @@ extern pthread_mutex_t mutex_interfaces_io;
 
 // --- socket --- //
 extern int socket_cpu_dispatch;
+extern int socket_cpu_interrupt;
 
 // --------------------------------- //
 
@@ -77,5 +78,7 @@ void liberar_recurso_signal(t_pcb *pcb, char *nombres_recurso, int cliente_fd);
 
 void *temporizador_quantum(void *arg);
 void *planificador_corto_plazo_rr(void *arg);
+
+t_pcb *sacar_de_cola_block(int pid);
 
 #endif
