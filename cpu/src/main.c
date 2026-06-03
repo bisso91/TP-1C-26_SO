@@ -112,6 +112,12 @@ int main(int argc, char *argv[]) {
       break;
     }
   }
+  // Conexion a Memory Stick
+  int conexion_stick = crear_conexion(ip_memory_stick, puerto_memory_stick);
+  if (conexion_stick != -1) {
+    log_info(logger, "## Conectado a Memory Stick");
+  } else {
+    log_error(logger, "Error al conectar a Memory Stick");
 
   // libero conexiones
   liberar_conexion(fd_memory);

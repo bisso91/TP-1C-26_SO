@@ -1,0 +1,17 @@
+#ifndef IO_FUNCIONES_H_
+#define IO_FUNCIONES_H_
+
+#include <commons/log.h>
+#include <stdbool.h>
+
+// fn principal
+void iniciar_bucle_io(int conexion_scheduler, char *tipo_io, t_log *logger);
+
+// fn's especificas
+
+void ejecutar_sleep(int conexion_shceduler, t_log *logger);
+void ejecutar_stdin(int conexion_shceduler, t_log *logger);
+void ejecutar_stdout(int conexion_shceduler, t_log *logger);
+void enviar_aviso_termino(int conexion_scheduler, int pid);
+
+#endif
