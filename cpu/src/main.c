@@ -1,3 +1,4 @@
+#include "cpu_utils.h"
 #include <commons/config.h>
 #include <commons/log.h>
 #include <stdbool.h>
@@ -12,11 +13,52 @@ void prueba_conexion_con_kernel_memory(int cliente_fd, t_log* logger);
 int main(int argc, char *argv[]) {
   saludar("cpu");
 
-  // valido cantidad de argumentos
-  if (argc < 3) {
-    printf(
-        "Error: Faltan argumentos. Uso: ./bin/cpu [Config] [Identificador]\n");
-    return 1;
+  char *config_path = (argc > 1) ? argv[1] : "./cpu.config";
+  char *id_cpu = (argc > 2) ? argv[2] : "1";
+
+  inicializar_cpu(config_path, id_cpu);
+
+  finalizar_cpu();
+
+  return 0;
+}
+
+/*
+ANOTACIONES....
+
+  CONEXIONES
+   Aca fd es File descriptor.
+   exportar a inicializacion --> Hecho
+   tengo que checkear que no haya conexiones ya hechas a memoria y scheduler y
+   stick, pero tengo que dejar algo escuchando por si quiero conectar otro stick
+   kernel memory me avisa que hay stick o lo tengo que detectar?
+
+*/
+
+/* DEJO ESTO X ACA PARA DESPUES...
+ // Defino logica para "recibir cod_ops"
+ // ACA TENGO QUE RECIBIR PID
+
+
+while (1) {
+   // La ejecución se frena acá hasta que llegue un mensaje
+   int cod_op = recibir_operacion(fd_scheduler, logger_cpu);
+
+   /*    switch (cod_op) {
+       case EJECUTAR_PROCESO:
+         log_info(logger_cpu,
+                  "Me llegó un proceso. Iniciando Ciclo de Instrucción.");
+         // ACA llamarías a tu ciclo: ejecutar_ciclo(fd_memory, fd_scheduler);
+         break;
+
+       case INTERRUPCION:
+         log_warning(logger_cpu, "¡Interrupción recibida! Desalojando...");
+         // Lógica para frenar el ciclo actual
+         break;
+    default:
+      log_error(logger_cpu, "Operación desconocida: %d", cod_op);
+      break;
+    }
   }
 
   char *id_cpu = argv[2];
@@ -69,14 +111,16 @@ int main(int argc, char *argv[]) {
     log_info(logger, "## Conectado a Memory Stick");
   } else {
     log_error(logger, "Error al conectar a Memory Stick");
-  }
 
-  //libero conexiones
-  liberar_conexion(conexion_memory);
-  liberar_conexion(conexion_scheduler);
-  liberar_conexion(conexion_stick);
-  config_destroy(config);
-  log_destroy(logger);
+       case -1:
+         log_error(logger_cpu, "El Scheduler se desconectó. Terminando CPU.");
+         return EXIT_FAILURE;
+
+         default:
+         log_error(logger_cpu, "Operación desconocida: %d", cod_op);
+         break;
+       }
+       
 
   return 0;;
 }
@@ -109,3 +153,4 @@ void prueba_conexion_con_kernel_memory(int conexion_memory, t_log* logger) {
         free(instruccion);
     }
 }
+*/

@@ -1,12 +1,187 @@
 #include <commons/config.h>
 #include <commons/log.h>
+#include <commons/string.h>
+#include <commons/collections/dictionary.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
 #include <utils/hello.h>
 #include <utils/utils.h>
-#include <commons/string.h>
 
+t_log *logger;
+t_dictionary *diccionario_instrucciones;
+char *path_base_scripts;
 
+// Firmas de funciones
+void *atender_clientes(void *arg);
+void procesar_iniciar_proceso(int cliente_fd);
+void procesar_pedir_instruccion(int cliente_fd);
+
+int main(int argc, char *argv[]) {
+    saludar("kernel_memory");
+    
+    logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, LOG_LEVEL_INFO);
+    if (logger == NULL) {
+        printf("No se creo el logger\n");
+        return 1;
+    }
+
+    t_config *config = congfig_create("kernel_memory.config");
+    if (config == NULL) {
+        log_error(logger, "No se pudo encontrar el archivo kernel_memory.config");
+        return 1;
+    }
+
+    char *ip = config_get_string_value(config, "IP_MEMORIA");
+    char *puerto = config_get_string_value(config, "PUERTO_ESCUCHA");
+    path_base_scripts = config_get_string_value(config, "SCRIPTS_BASEPATH");
+
+    // guardo las lineas asociadas al PID del txt
+    diccionario_instrucciones = dictionary_create();
+
+    int server_fd = iniciar_servidor(ip, puerto);
+    log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...", ip, puerto);
+
+    // ciclo multihilo 
+    while(1){
+        int cliente_fd = esperar_cliente(server_fd);
+        if (cliente_fd != -1) {
+            log_info(logger, "## Nuevo Cliente Conectado - FD del socket: %d", cliente_fd);
+            
+            pthread_t hilo_cliente;
+            int *socket_hilo= malloc(sizeof(int));
+            *socket_hilo = cliente_fd;
+
+            pthread_create(&hiloo_cliente, NULL, atender_cliente, socket_hilo);
+            pthread_detach(hilo_cliente);
+        }
+    }
+
+    config_destroy(config);
+    log_destroy(logger);
+    dictionary_destroy(diccionario_instrucciones);
+    return 0;
+}
+
+void *atender_cliente(void *arg) {
+    int cliente_fd = *int*) arg;
+    free(arg);
+
+    while(1)) {
+        int cod_op = recibir_operacion(cliente_fd);
+        if (cod_op == -1) {
+            log_warning(logger, "El cliente con FD %d se desconectó.", cliente_fd);
+            liberar_conexion(cliente_fd);
+            break;             
+    }
+
+    switch (cod_op) {
+            case INICIAR_PROCESO:
+                procesar_iniciar_proceso(cliente_fd);
+                break;
+                
+            case PEDIR_INSTRUCCION:
+                procesar_pedir_instruccion(cliente_fd);
+                break;
+                
+            case CONSULTAR_ESPACIO_LIBRE: {
+                // Mockeo de espacio
+                uint32_t espacio_falso = 999999;
+                send(cliente_fd, &espacio_falso, sizeof(uint32_t), 0);
+                log_info(logger, "Simulando espacio libre (MOCK) = %u", espacio_falso);
+                break;
+            }
+            case LEER_MEMORIA:
+            case ESCRIBIR_MEMORIA: {
+                // Mockeo de lectura
+                int ok = 1;
+                send(cliente_fd, &ok, sizeof(int), 0);
+                log_info(logger, "Simulando éxito en lectura/escritura de memoria (MOCK).");
+                break;
+            }
+
+            default:
+                log_warning(logger, "Operación desconocida o no implementada: %d", cod_op);
+                break;
+        } 
+    return NULL;    
+}
+
+void procesar_iniciar_proceso(int cliente_fd) {
+    // El scheduler debe mandar algo como: "1 proceso1.txt" (PID + PATH)
+    char* mensaje_recibido = recibir_string(cliente_fd); 
+    char** parametros = string_split(mensaje_recibido, " ");
+    char* pid_string = string_duplicate(parametros[0]);
+    char* nombre_archivo = parametros[1];
+
+    char* ruta_completa = string_from_format("%s/%s", path_base_scripts, nombre_archivo);
+    
+    FILE* archivo = fopen(ruta_completa, "r");
+    if (archivo == NULL) {
+        log_error(logger, "No se pudo abrir el script %s", ruta_completa);
+        free(ruta_completa);
+        free(mensaje_recibido);
+        string_array_destroy(parametros);
+        return;
+    }
+
+    // Leemos el archivo entero
+    fseek(archivo, 0, SEEK_END);
+    long fsize = ftell(archivo);
+    fseek(archivo, 0, SEEK_SET);
+    char* contenido = malloc(fsize + 1);
+    fread(contenido, fsize, 1, archivo);
+    fclose(archivo);
+    contenido[fsize] = '\0'; 
+
+    // Dividimos por enter (\n) y guardamos en diccionario usando el PID de llave
+    char** array_instrucciones = string_split(contenido, "\n");
+    dictionary_put(diccionario_instrucciones, pid_string, array_instrucciones);
+
+    log_info(logger, "## PID: %s - Proceso Creado - Instrucciones cargadas", pid_string);
+
+    // Respondemos OK al scheduler
+    int ok = 1;
+    send(cliente_fd, &ok, sizeof(int), 0);
+
+    free(ruta_completa);
+    free(contenido);
+    free(mensaje_recibido);
+    string_array_destroy(parametros);
+}
+
+// Busca en el diccionario y devuelve la instrucción según el Program Counter
+void procesar_pedir_instruccion(int cliente_fd) {
+    // La CPU debe mandar algo como: "1 3" (PID + Program Counter)
+    char* mensaje = recibir_string(cliente_fd);
+    char** parametros = string_split(mensaje, " ");
+    char* pid_string = parametros[0];
+    int pc_recibido = atoi(parametros[1]);
+
+    char** array_instrucciones = dictionary_get(diccionario_instrucciones, pid_string);
+
+    if (array_instrucciones != NULL) {
+        char* instruccion = array_instrucciones[pc_recibido];
+        
+        if(instruccion != NULL) {
+            log_info(logger, "## Obtener instrucción - PID: %s - Instrucción: %s", pid_string, instruccion);
+            // Usamos tu funcion de utils que ya serializa textos
+            enviar_mensaje(instruccion, cliente_fd);
+        } else {
+             log_warning(logger, "Se llego al fin de instrucciones de PID %s", pid_string);
+             enviar_mensaje("EXIT", cliente_fd); 
+        }
+    } else {
+        log_error(logger, "No se encontraron instrucciones para el PID %s", pid_string);
+        enviar_mensaje("ERROR", cliente_fd);
+    }
+
+    free(mensaje);
+    string_array_destroy(parametros);
+}
+
+// Hilo individual para atender a cada módulo conectado
 // Lo mismo que el stick, aca solo invoco la funcion principal, el resto vuela
 
 /*
@@ -31,14 +206,14 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  //extraer valores de ip y puerto
+  // extraer valores de ip y puerto
   char *ip = config_get_string_value(config, "IP_MEMORIA");
   char *puerto = config_get_string_value(config, "PUERTO_ESCUCHA");
 
-
   // iniciar server con ip y puerto
-  int server_fd = iniciar_servidor(ip, puerto);
-  log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...", ip, puerto);
+  int server_fd = iniciar_servidor(puerto, logger);
+  log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...",
+           ip, puerto);
 
   //path base de scripts desde el config
   char* path_base_scripts = config_get_string_value(config, "SCRIPTS_BASEPATH");
@@ -52,7 +227,7 @@ int main(int argc, char *argv[]) {
     atender_cliente_mock(cliente_fd, logger, diccionario_paths, path_base_scripts);
   }
 
-  //libero memoria
+  // libero memoria
   config_destroy(config);
   log_destroy(logger);
 
