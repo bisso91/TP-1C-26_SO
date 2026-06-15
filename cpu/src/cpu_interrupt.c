@@ -1,5 +1,5 @@
 #include "cpu_interrupt.h"
-#include "cpu_utils.h"
+#include "funciones_cpu.h"
 
 void *interrupt_server(void *) {
 

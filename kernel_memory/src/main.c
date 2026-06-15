@@ -14,7 +14,7 @@ t_dictionary *diccionario_instrucciones;
 char *path_base_scripts;
 
 // Firmas de funciones
-void *atender_clientes(void *arg);
+void *atender_cliente(void *arg); // Corregido el nombre
 void procesar_iniciar_proceso(int cliente_fd);
 void procesar_pedir_instruccion(int cliente_fd);
 
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    t_config *config = congfig_create("kernel_memory.config");
+    t_config *config = config_create("kernel_memory.config"); // Corregido el typo congfig_create
     if (config == NULL) {
         log_error(logger, "No se pudo encontrar el archivo kernel_memory.config");
         return 1;
@@ -50,10 +50,10 @@ int main(int argc, char *argv[]) {
             log_info(logger, "## Nuevo Cliente Conectado - FD del socket: %d", cliente_fd);
             
             pthread_t hilo_cliente;
-            int *socket_hilo= malloc(sizeof(int));
+            int *socket_hilo = malloc(sizeof(int));
             *socket_hilo = cliente_fd;
 
-            pthread_create(&hiloo_cliente, NULL, atender_cliente, socket_hilo);
+            pthread_create(&hilo_cliente, NULL, atender_cliente, socket_hilo); // Corregido el typo hiloo_cliente
             pthread_detach(hilo_cliente);
         }
     }
@@ -65,18 +65,18 @@ int main(int argc, char *argv[]) {
 }
 
 void *atender_cliente(void *arg) {
-    int cliente_fd = *int*) arg;
+    int cliente_fd = *(int*) arg; // Corregido el casteo y paréntesis faltante
     free(arg);
 
-    while(1)) {
+    while(1) { // Corregido el paréntesis sobrante
         int cod_op = recibir_operacion(cliente_fd);
         if (cod_op == -1) {
             log_warning(logger, "El cliente con FD %d se desconectó.", cliente_fd);
             liberar_conexion(cliente_fd);
             break;             
-    }
+        } // <- Agregada llave faltante del if
 
-    switch (cod_op) {
+        switch (cod_op) {
             case INICIAR_PROCESO:
                 procesar_iniciar_proceso(cliente_fd);
                 break;
@@ -105,6 +105,7 @@ void *atender_cliente(void *arg) {
                 log_warning(logger, "Operación desconocida o no implementada: %d", cod_op);
                 break;
         } 
+    } // <- Agregada llave faltante del while
     return NULL;    
 }
 
@@ -180,6 +181,10 @@ void procesar_pedir_instruccion(int cliente_fd) {
     free(mensaje);
     string_array_destroy(parametros);
 }
+
+/*
+//prox sacar esto de aca y ponerlo en un .h aparte
+void atender_cliente_mock(int cliente_fd, t_log* logger, t_dictionary* diccionario, char* basepath);
 
 // Hilo individual para atender a cada módulo conectado
 // Lo mismo que el stick, aca solo invoco la funcion principal, el resto vuela

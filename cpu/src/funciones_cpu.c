@@ -1,4 +1,4 @@
-#include "cpu_utils.h"
+#include "funciones_cpu.h"
 #include <stdbool.h>
 
 t_log *logger_cpu = NULL;
@@ -172,8 +172,8 @@ VIENDO SI SIGO USANDOLA*/
 
 // FUNCIONES PARA RECIBIR DATOS...
 
-// 1 Para recibir solo el número del código de operación
-int recibir_operacion(int socket_cliente, t_log *logger) {
+// 1 Para recibir solo el número del código de operación // <-- Renombrada
+int recibir_operacion_cpu(int socket_cliente, t_log *logger) {
   int cod_op;
 
   // Intentamos recibir el código de operación
@@ -196,13 +196,4 @@ int recibir_operacion(int socket_cliente, t_log *logger) {
     close(socket_cliente);
     return -1;
   }
-}
-
-// 2 Para recibir el "cuerpo" del mensaje...si viene con datos
-void *recibir_buffer(int *size, int socket_cliente) {
-  void *buffer;
-  recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
-  buffer = malloc(*size);
-  recv(socket_cliente, buffer, *size, MSG_WAITALL);
-  return buffer;
 }

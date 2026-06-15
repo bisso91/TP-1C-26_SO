@@ -1,4 +1,4 @@
-#include "cpu_utils.h"
+#include "funciones_cpu.h"
 #include <commons/config.h>
 #include <commons/log.h>
 #include <stdbool.h>
