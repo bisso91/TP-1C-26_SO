@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
   }
 */
   // libero memoria
-  config_destroy(config_server);
-  log_destroy(logger_server);
+  // config_destroy(config_server);
+  // log_destroy(logger_server);
   return 0;
 }

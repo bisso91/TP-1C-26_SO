@@ -43,6 +43,7 @@ typedef enum {
   FIN_IO,
   FIN_QUANTUM,
   INTERRUPCION_QUANTUM,
+  INIT_PROC,
 
   // kernel memory
   INICIAR_PROCESO,
@@ -105,6 +106,7 @@ void eliminar_paquete(t_paquete *paquete);
 int recibir_operacion(int socket_cliente);
 void *recibir_buffer(int *size, int socket_cliente);
 void recibir_mensaje(int socket_cliente, t_log *logger);
+void enviar_string(char *mensaje, int socket_cliente, op_code cop);
 
 // ---------------------------------------------------- //
 

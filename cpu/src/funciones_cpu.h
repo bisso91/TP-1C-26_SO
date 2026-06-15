@@ -42,6 +42,7 @@ typedef struct {
 extern t_log *logger_cpu;
 extern t_config *config_plana;
 extern t_config_cpu config_cpu;
+extern t_registros registros;
 
 extern int kernel_interrupt_fd;
 extern uint32_t interrupted_pid;

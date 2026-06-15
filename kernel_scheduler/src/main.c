@@ -17,159 +17,182 @@ extern sem_t sem_cpu_libre;
 
 int socket_cpu_dispatch = -1;
 int socket_cpu_interrupt = -1;
+int socket_kernel_memory = -1;
+int active_stdin_pid = -1;
+int active_stdout_pid = -1;
+
+pthread_mutex_t mutex_io_pending;
+t_dictionary *io_pending_addresses;
 
 void *atender_cliente(void *arg);
+void crear_proceso_inicial(char *path_proceso);
 
 int main(int argc, char *argv[]) {
   saludar("kernel_scheduler");
 
-  //===================================================//
-  //     CONFIGURACION DEL PLANIFICADOR COMO CLIENTE   //
-  //===================================================//
-  t_log *logger_cliente = log_create("scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
-
-  if (logger_cliente == NULL) {
-    printf("Error al crear el logger de cliente\n");
+  if (argc < 3) {
+    printf("ERROR: Faltan argumentos. Uso: %s [Config] [Path Proceso Inicial]\n", argv[0]);
     return 1;
   }
 
-  t_config *config_cliente = config_create("kernel_scheduler.config");
-  if (config_cliente == NULL) {
-    log_error(logger_cliente,
-              "No se pudo encontrar el arhcivo scheduler.config");
-    return 1;
-  }
-
-  // obtengo el ip y el puerto a conectar
-  char *ip_cliente = config_get_string_value(config_cliente, "IP_SERVIDOR");
-  char *puerto_cliente =
-      config_get_string_value(config_cliente, "PUERTO_SERVIDOR");
-
-  // conecto al ip y al mismo puerto que el kernel_memory
-  int conexion = crear_conexion(ip_cliente, puerto_cliente);
-  if (conexion != 1) {
-    log_info(logger_cliente, "## Conectado exitosamente al servidor en %s:%s",
-             ip_cliente, puerto_cliente);
-  } else {
-    log_error(logger_cliente, "Error al intentar conectarse al servidor");
-  }
-
-  liberar_conexion(conexion);
-  config_destroy(config_cliente);
-  log_destroy(logger_cliente);
-  //===================================================//
+  char *config_path = argv[1];
+  char *path_proceso_inicial = argv[2];
 
   //===================================================//
-  //     CONFIGURACION DEL PLANIFICADOR COMO SERVER    //
+  //     INICIALIZACIÓN DE COLAS / MUTEX / SEMAFOROS    //
   //===================================================//
-  logger_server = log_create("kernel_scheduler.log", "KERNEL_SCHEDULER",true, LOG_LEVEL_INFO);
-  if (logger_server == NULL) {
-    printf("ERROR: No se pudo crear el logger\n");
-    exit(1);
-  }   
-  // -------------------------------------------------- //
-
-  if (logger_server == NULL) {
-    printf("No se creo el logger");
-    return 1;
-  }
-  t_config *config_server = config_create("kernel_scheduler.config");
-  if (config_server == NULL) {
-    log_error(logger_server,
-              "No se pudo encontrar el archivo kernel_scheduler.config");
-    return 1;
-  }
-
-  // extraer valores de ip y puerto
-  char *ip_server = config_get_string_value(config_server, "IP_MEMORIA");
-  char *puerto_server =
-      config_get_string_value(config_server, "PUERTO_ESCUCHA");
-
-  // iniciar server con ip y puerto
-  int server_fd = iniciar_servidor(ip_server, puerto_server);
-  log_info(logger_server,
-           "Kernel Scheduler iniciado en %s:%s. Esperando conexiones...",
-           ip_server, puerto_server);
-           // espero clientes
-  while (1) {
-    int cliente_fd = esperar_cliente(server_fd);
-    log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d", cliente_fd);
-
-    int *fd_ptr = malloc(sizeof(int));
-    *fd_ptr = cliente_fd;
-
-    pthread_t hilo_cliente;
-    pthread_create(&hilo_cliente, NULL, atender_cliente, fd_ptr);
-    pthread_detach(hilo_cliente);
-    
-  }
-
-  // --- lectura de archivo de config para RR y recursos --- //
-  algoritmo_de_planificacion = config_get_string_value(config_server, "ALGORITMO_PLANIFICIACION");
-  
-  if(config_has_property(config_server, "QUANTUM")){
-    quantum = config_get_int_value(config_server, "QUANTUM");
-  }
-
-  char* *nombres_recursos = config_get_array_value(config_server, "RECURSOS");
-  char* *instancias_recursos = config_get_array_value(config_server, "INSTANCIAS_RECURSOS");
-
-  // inicialización de diccionario de mutex
-  inicializar_recursos(nombres_recursos, instancias_recursos);
-
-  // libero memoria de los recursos
-  string_array_destroy(nombres_recursos);
-  string_array_destroy(instancias_recursos);
-  // ------------------------------------------------------ //
-
-  // --- INICIALIZACIÓN DE COLAS / MUTEX / SEMAFOROS --- //
-              // --- inicialización de colas --- //
   cola_new = queue_create();
   cola_ready = queue_create();
   cola_block = queue_create();
   cola_exit = queue_create();
   interfaces_io = dictionary_create();
-              // ------------------------------- //
+  io_pending_addresses = dictionary_create();
 
-              // --- inicialización de mutex --- //
   pthread_mutex_init(&mutex_new, NULL);
   pthread_mutex_init(&mutex_ready, NULL);
   pthread_mutex_init(&mutex_block, NULL);
   pthread_mutex_init(&mutex_exit, NULL);
-              // ------------------------------- //
-              // --- semaforos --- //
-  sem_init(&sem_grado_multiprogramacion, 0, 3);
+  pthread_mutex_init(&mutex_interfaces_io, NULL);
+  pthread_mutex_init(&mutex_io_pending, NULL);
+
+  sem_init(&sem_grado_multiprogramacion, 0, 8);
   sem_init(&sem_procesos_en_ready, 0, 0);
   sem_init(&sem_procesos_en_new, 0, 0);
   sem_init(&sem_cpu_libre, 0, 1);
 
-              // --- inicialización de hilos --- //
+  //===================================================//
+  //     CONFIGURACION DEL PLANIFICADOR COMO SERVER/CLIENT //
+  //===================================================//
+  logger_server = log_create("kernel_scheduler.log", "KERNEL_SCHEDULER", true, LOG_LEVEL_INFO);
+  if (logger_server == NULL) {
+    printf("ERROR: No se pudo crear el logger\n");
+    exit(1);
+  }
+
+  t_config *config_server = config_create(config_path);
+  if (config_server == NULL) {
+    log_error(logger_server, "No se pudo encontrar el archivo kernel_scheduler.config");
+    return 1;
+  }
+
+  // --- lectura de archivo de config para RR y recursos --- //
+  algoritmo_de_planificacion = config_get_string_value(config_server, "PLANIFICATION_ALGORITHM");
+  if (algoritmo_de_planificacion == NULL) {
+    algoritmo_de_planificacion = config_get_string_value(config_server, "ALGORITMO_PLANIFICIACION");
+  }
+  if (algoritmo_de_planificacion == NULL) {
+    algoritmo_de_planificacion = "FIFO";
+  }
+  
+  if (config_has_property(config_server, "RR_QUANTUM")) {
+    quantum = config_get_int_value(config_server, "RR_QUANTUM");
+  } else if (config_has_property(config_server, "QUANTUM")) {
+    quantum = config_get_int_value(config_server, "QUANTUM");
+  } else {
+    quantum = 1000;
+  }
+
+  // Recursos de configuración (si existen)
+  if (config_has_property(config_server, "RECURSOS") && config_has_property(config_server, "INSTANCIAS_RECURSOS")) {
+    char** nombres_recursos = config_get_array_value(config_server, "RECURSOS");
+    char** instancias_recursos = config_get_array_value(config_server, "INSTANCIAS_RECURSOS");
+    inicializar_recursos(nombres_recursos, instancias_recursos);
+    string_array_destroy(nombres_recursos);
+    string_array_destroy(instancias_recursos);
+  } else {
+    recursos_sistema = dictionary_create();
+  }
+
+  // --- CONECTAR A KERNEL MEMORY --- //
+  char *ip_memory = config_get_string_value(config_server, "IP_MEMORIA");
+  char *puerto_memory = config_get_string_value(config_server, "PUERTO_SERVIDOR");
+  if (puerto_memory == NULL) {
+     puerto_memory = "8002"; // default Kernel Memory port
+  }
+
+  log_info(logger_server, "Conectando a Kernel Memory en %s:%s...", ip_memory, puerto_memory);
+  int connection_km = crear_conexion(ip_memory, puerto_memory);
+  if (connection_km != -1) {
+    log_info(logger_server, "## Conectado a Kernel Memory");
+    socket_kernel_memory = connection_km;
+  } else {
+    log_error(logger_server, "No se pudo conectar a Kernel Memory. Abortando.");
+    return 1;
+  }
+
+  // --- CREAR PROCESO INICIAL --- //
+  crear_proceso_inicial(path_proceso_inicial);
+
+  // --- INICIALIZACIÓN DE HILOS --- //
   pthread_t hilo_plp;
   pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
   pthread_detach(hilo_plp);
- 
-  // -------------------------------------------------- // 
 
-  // --- Elección del hilo de corto plazo (PCP) --- //
   pthread_t hilo_pcp;
   if (strcmp(algoritmo_de_planificacion, "FIFO") == 0){
     pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
   } else if (strcmp(algoritmo_de_planificacion, "RR") == 0){ 
     pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_rr, NULL);
   } else {
-    log_error(logger_server, "Algoritmo desconocido");
+    log_error(logger_server, "Algoritmo de planificación desconocido: %s", algoritmo_de_planificacion);
     return 1;
   }
-  pthread_detach(hilo_pcp);  
+  pthread_detach(hilo_pcp);
 
-  // libero memoria
+  // --- INICIAR SERVIDOR SCHEDULER --- //
+  char *ip_server = "0.0.0.0"; // listen on all interfaces
+  char *puerto_server = config_get_string_value(config_server, "PUERTO_ESCUCHA");
+
+  int server_fd = iniciar_servidor(ip_server, puerto_server);
+  log_info(logger_server, "Kernel Scheduler iniciado en %s:%s. Esperando conexiones...", ip_server, puerto_server);
+
+  while (1) {
+    int cliente_fd = esperar_cliente(server_fd);
+    if (cliente_fd != -1) {
+      log_info(logger_server, "## Nuevo Cliente Conectado - FD del socket: %d", cliente_fd);
+
+      int *fd_ptr = malloc(sizeof(int));
+      *fd_ptr = cliente_fd;
+
+      pthread_t hilo_cliente;
+      pthread_create(&hilo_cliente, NULL, atender_cliente, fd_ptr);
+      pthread_detach(hilo_cliente);
+    }
+  }
+
   config_destroy(config_server);
   log_destroy(logger_server);
   return 0;
 }
 
+void crear_proceso_inicial(char *path_proceso) {
+    int nuevo_pid = generador_pid++;
+    log_info(logger_server, "Creando proceso inicial PID %d con script %s", nuevo_pid, path_proceso);
+
+    if (socket_kernel_memory != -1) {
+      char *mensaje_km = string_from_format("%d %s", nuevo_pid, path_proceso);
+      enviar_string(mensaje_km, socket_kernel_memory, INICIAR_PROCESO);
+      free(mensaje_km);
+
+      int ok;
+      recv(socket_kernel_memory, &ok, sizeof(int), MSG_WAITALL);
+    }
+
+    t_pcb *nuevo_pcb = malloc(sizeof(t_pcb));
+    nuevo_pcb->pid = nuevo_pid;
+    nuevo_pcb->program_counter = 0;
+    nuevo_pcb->estado = ESTADO_NEW;
+
+    pthread_mutex_lock(&mutex_new);
+    queue_push(cola_new, nuevo_pcb);
+    pthread_mutex_unlock(&mutex_new);
+
+    log_info(logger_server, "## (%d) Se crea el proceso - Estado: NEW", nuevo_pcb->pid);
+    sem_post(&sem_procesos_en_new);
+}
+
 void *atender_cliente(void *arg){
-  int cliente_fd = *(int*) arg; // q p*nga es ese puntero???
+  int cliente_fd = *(int*) arg;
   free(arg);
 
   while(1){
@@ -177,7 +200,6 @@ void *atender_cliente(void *arg){
 
     if (cod_op <= 0){
       log_warning(logger_server, "El cliente con FD %d se desconectó.", cliente_fd);
-      // ver si agregar logica para identificar quien tiro la conexion
       break;
     }
 
@@ -185,65 +207,178 @@ void *atender_cliente(void *arg){
     case MENSAJE:
       recibir_mensaje(cliente_fd, logger_server);
       break;
-    case IO_GENERICA: {
-      t_pcb *pcb_recibido = recibir_pcb(cliente_fd);
-      char *nombre_interfaz = recibir_string(cliente_fd);
 
-      log_info(logger_server, "## (PID %d) Pasa de EXEC a BLOCKED (Esperando a %s )", pcb_recibido->pid, nombre_interfaz);
-      bloquear_proceso_por_io(pcb_recibido, nombre_interfaz);
+    case IDENTIFICACION_IO: {
+      char *nombre_io = recibir_string(cliente_fd);
+      int *socket_io = malloc(sizeof(int));
+      *socket_io = cliente_fd;
 
       pthread_mutex_lock(&mutex_interfaces_io);
-      int *socket_destino = dictionary_get(interfaces_io, nombre_interfaz);
+      dictionary_put(interfaces_io, nombre_io, socket_io);
       pthread_mutex_unlock(&mutex_interfaces_io);
 
-      if(socket_destino != NULL){
-        //enviar_peticion_io(...);
-      } else {
-        log_error(logger_server, "Interfaz %s no conectada.", nombre_interfaz);
-      }
-      free(nombre_interfaz);
+      log_info(logger_server, "## Interfaz IO registrada: %s en el FD %d", nombre_io, cliente_fd);
       break;
     }
+
+    case IO_SLEEP: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      int milisegundos = recibir_entero(cliente_fd);
+
+      log_info(logger_server, "## (%d) Solicitó syscall: SLEEP", pcb->pid);
+      log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+
+      pcb->estado = ESTADO_BLOCK;
+      pthread_mutex_lock(&mutex_block);
+      queue_push(cola_block, pcb);
+      pthread_mutex_unlock(&mutex_block);
+
+      sem_post(&sem_cpu_libre);
+
+      pthread_mutex_lock(&mutex_interfaces_io);
+      int *socket_io = dictionary_get(interfaces_io, "SLEEP");
+      pthread_mutex_unlock(&mutex_interfaces_io);
+
+      if (socket_io != NULL) {
+        t_paquete *paquete_io = crear_paquete();
+        paquete_io->cop = IO_SLEEP;
+        int size_payload = sizeof(int) * 2;
+        void *payload = malloc(size_payload);
+        memcpy(payload, &(pcb->pid), sizeof(int));
+        memcpy(payload + sizeof(int), &milisegundos, sizeof(int));
+        agregar_a_paquete(paquete_io, payload, size_payload);
+        enviar_paquete(paquete_io, *socket_io);
+        free(payload);
+        eliminar_paquete(paquete_io);
+      } else {
+        log_error(logger_server, "Interfaz SLEEP no conectada. Desbloqueando.");
+        desbloquear_proceso_de_io(pcb);
+      }
+      break;
+    }
+
+    case IO_STDIN: {
+      pthread_mutex_lock(&mutex_interfaces_io);
+      int *socket_io_stdin = dictionary_get(interfaces_io, "IO_STDIN");
+      pthread_mutex_unlock(&mutex_interfaces_io);
+
+      if (socket_io_stdin != NULL && cliente_fd == *socket_io_stdin) {
+        // Response from STDIN device!
+        char *texto_leido = recibir_string(cliente_fd);
+        log_info(logger_server, "STDIN recibio texto: '%s' para el PID %d", texto_leido, active_stdin_pid);
+        free(texto_leido);
+
+        // MOCK write to memory
+        if (socket_kernel_memory != -1) {
+          int cop = ESCRIBIR_MEMORIA;
+          send(socket_kernel_memory, &cop, sizeof(int), 0);
+          int ok;
+          recv(socket_kernel_memory, &ok, sizeof(int), MSG_WAITALL);
+        }
+
+        t_pcb *pcb_a_desbloquear = sacar_de_cola_block(active_stdin_pid);
+        if(pcb_a_desbloquear != NULL){
+          log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
+          pcb_a_desbloquear->estado = ESTADO_READY;
+          pthread_mutex_lock(&mutex_ready);
+          queue_push(cola_ready, pcb_a_desbloquear);
+          pthread_mutex_unlock(&mutex_ready);
+          sem_post(&sem_procesos_en_ready);
+        }
+        active_stdin_pid = -1;
+      } else {
+        // Request from CPU!
+        t_pcb *pcb = recibir_pcb(cliente_fd);
+        int direccion_logica = recibir_entero(cliente_fd);
+        int size_to_read = recibir_entero(cliente_fd);
+
+        log_info(logger_server, "## (%d) Solicitó syscall: STDIN", pcb->pid);
+        log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+
+        pcb->estado = ESTADO_BLOCK;
+        pthread_mutex_lock(&mutex_block);
+        queue_push(cola_block, pcb);
+        pthread_mutex_unlock(&mutex_block);
+
+        sem_post(&sem_cpu_libre);
+
+        if (socket_io_stdin != NULL) {
+          active_stdin_pid = pcb->pid;
+          t_paquete *paquete_io = crear_paquete();
+          paquete_io->cop = IO_STDIN;
+          int size_payload = sizeof(int) * 2;
+          void *payload = malloc(size_payload);
+          memcpy(payload, &(pcb->pid), sizeof(int));
+          memcpy(payload + sizeof(int), &size_to_read, sizeof(int));
+          agregar_a_paquete(paquete_io, payload, size_payload);
+          enviar_paquete(paquete_io, *socket_io_stdin);
+          free(payload);
+          eliminar_paquete(paquete_io);
+        } else {
+          log_error(logger_server, "Interfaz STDIN no conectada. Desbloqueando.");
+          desbloquear_proceso_de_io(pcb);
+        }
+      }
+      break;
+    }
+
+    case IO_STDOUT: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      int direccion_logica = recibir_entero(cliente_fd);
+      int size_to_read = recibir_entero(cliente_fd);
+
+      log_info(logger_server, "## (%d) Solicitó syscall: STDOUT", pcb->pid);
+      log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+
+      pcb->estado = ESTADO_BLOCK;
+      pthread_mutex_lock(&mutex_block);
+      queue_push(cola_block, pcb);
+      pthread_mutex_unlock(&mutex_block);
+
+      sem_post(&sem_cpu_libre);
+
+      pthread_mutex_lock(&mutex_interfaces_io);
+      int *socket_io = dictionary_get(interfaces_io, "IO_STDOUT");
+      pthread_mutex_unlock(&mutex_interfaces_io);
+
+      if (socket_io != NULL) {
+        char *texto_mock = "Contenido de memoria mockeado";
+        int size_of_text = strlen(texto_mock) + 1;
+        t_paquete *paquete_io = crear_paquete();
+        paquete_io->cop = IO_STDOUT;
+        int size_payload = sizeof(int) * 2 + size_of_text;
+        void *payload = malloc(size_payload);
+        memcpy(payload, &(pcb->pid), sizeof(int));
+        memcpy(payload + sizeof(int), &size_of_text, sizeof(int));
+        memcpy(payload + sizeof(int) * 2, texto_mock, size_of_text);
+        agregar_a_paquete(paquete_io, payload, size_payload);
+        enviar_paquete(paquete_io, *socket_io);
+        free(payload);
+        eliminar_paquete(paquete_io);
+      } else {
+        log_error(logger_server, "Interfaz STDOUT no conectada. Desbloqueando.");
+        desbloquear_proceso_de_io(pcb);
+      }
+      break;
+    }
+
     case FIN_IO:{
-              // recibo el PID del proceso que terminó
-              int pid_terminado = recibir_entero(cliente_fd);
+      int pid_terminado = recibir_entero(cliente_fd);
+      t_pcb *pcb_a_desbloquear = sacar_de_cola_block(pid_terminado);
 
-              // lo saco de la cola de BLOCKED
-              t_pcb *pcb_a_desbloquear = sacar_de_cola_block(pid_terminado);
+      if(pcb_a_desbloquear != NULL){
+        log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
+        pcb_a_desbloquear->estado = ESTADO_READY;
+        pthread_mutex_lock(&mutex_ready);
+        queue_push(cola_ready, pcb_a_desbloquear);
+        pthread_mutex_unlock(&mutex_ready);
+        sem_post(&sem_procesos_en_ready);
+      } else {
+        log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK", pid_terminado);
+      }
+      break;
+    }
 
-              if(pcb_a_desbloquear != NULL){
-                log_info(logger_server, "## (PID: %d) Desbloqueado. Pasando a READY", pcb_a_desbloquear->pid);
-
-                // cambio el estado
-                pcb_a_desbloquear->estado = ESTADO_READY;
-
-                // lo paso a la cola de READY
-                pthread_mutex_lock(&mutex_ready);
-                queue_push(cola_ready, pcb_a_desbloquear);
-                pthread_mutex_unlock(&mutex_ready);
-
-                // notifico al planificador de corto plazo
-                sem_post(&sem_procesos_en_ready);
-                } else {
-                  log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK", pid_terminado);
-                }
-                break;
-            }
-            /*  
-            case IDENTIFICACION_IO:
-                //char *nombre_io = recibir_mensaje(cliente_fd, logger_server);
-                char *nombre_io = "SLEEP"; //harcodeo temporal
-
-                int *socket_io = malloc(sizeof(int));
-                *socket_io = cliente_fd;
-
-                pthread_mutex_lock(&mutex_interfaces_io);
-                dictionary_put(interfaces_io, nombre_io, socket_io);
-                pthread_mutex_unlock(&mutex_interfaces_io);
-
-                log_info(logger_server, "Interfaz IO registrada: %s en el FD %d", nombre_io, cliente_fd);
-                */
-    // --- CASOS PARA RECURSOS --- //
     case WAIT_RECURSO: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
       char *nombre_recurso = recibir_string(cliente_fd);
@@ -258,11 +393,51 @@ void *atender_cliente(void *arg){
       free(nombre_recurso);
       break; 
     }
-    // ---------------------------- //
-    // --- DESALOJO POR RR --- //
+    case INIT_PROC: {
+      t_pcb *pcb_creador = recibir_pcb(cliente_fd);
+      char *path_proceso = recibir_string(cliente_fd);
+      int prioridad = recibir_entero(cliente_fd);
+
+      log_info(logger_server, "## (%d) Solicitó syscall: INIT_PROC para '%s'", pcb_creador->pid, path_proceso);
+
+      int nuevo_pid = generador_pid++;
+      
+      if (socket_kernel_memory != -1) {
+        char *mensaje_km = string_from_format("%d %s", nuevo_pid, path_proceso);
+        enviar_string(mensaje_km, socket_kernel_memory, INICIAR_PROCESO);
+        free(mensaje_km);
+
+        int ok;
+        recv(socket_kernel_memory, &ok, sizeof(int), MSG_WAITALL);
+      }
+
+      t_pcb *nuevo_pcb = malloc(sizeof(t_pcb));
+      nuevo_pcb->pid = nuevo_pid;
+      nuevo_pcb->program_counter = 0;
+      nuevo_pcb->estado = ESTADO_NEW;
+
+      pthread_mutex_lock(&mutex_new);
+      queue_push(cola_new, nuevo_pcb);
+      pthread_mutex_unlock(&mutex_new);
+
+      log_info(logger_server, "## (%d) Se crea el proceso - Estado: NEW", nuevo_pcb->pid);
+      sem_post(&sem_procesos_en_new);
+
+      pcb_creador->estado = ESTADO_READY;
+      pthread_mutex_lock(&mutex_ready);
+      queue_push(cola_ready, pcb_creador);
+      pthread_mutex_unlock(&mutex_ready);
+      sem_post(&sem_procesos_en_ready);
+
+      sem_post(&sem_cpu_libre);
+
+      free(path_proceso);
+      break;
+    }
+
     case FIN_QUANTUM: {
       t_pcb *pcb_desalojado = recibir_pcb(cliente_fd);
-      log_info(logger_server, "## (PID %d) Desalojado por fin de Quantum. Pasando a READY.", pcb_desalojado->pid);
+      log_info(logger_server, "## (%d) - Desalojado por fin de quantum", pcb_desalojado->pid);
 
       pcb_desalojado->estado = ESTADO_READY;
 
@@ -271,16 +446,17 @@ void *atender_cliente(void *arg){
       pthread_mutex_unlock(&mutex_ready);
 
       sem_post(&sem_procesos_en_ready);
+      sem_post(&sem_cpu_libre);
       break;
     }
     case FIN_PROCESO: {
       t_pcb *pcb_finalizado = recibir_pcb(cliente_fd);
-      finalizar_proceso(pcb_finalizado, "Finalización por CPU");
+      finalizar_proceso(pcb_finalizado, "SUCCESS");
       break;
     }
     case SEGMENTATION_FAULT: {
       t_pcb *pcb_error = recibir_pcb(cliente_fd);
-      finalizar_proceso(pcb_error, "Finalización por Fault de Segmentación");
+      finalizar_proceso(pcb_error, "SEG_FAULT");
       break;
     }
     case IDENTIFICACION_CPU_DISPATCH: {
@@ -296,7 +472,7 @@ void *atender_cliente(void *arg){
     default:
         log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
         break;
-        }
+    }
   }
   close(cliente_fd);
   return NULL;
