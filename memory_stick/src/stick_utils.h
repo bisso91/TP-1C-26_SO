@@ -19,5 +19,7 @@ typedef struct {
 
 // Defino el procedimiento general del stick
 void iniciar_operacion_stick(char* config_path, int tamanio);
+void ejecutar_lectura_stick(int cliente_fd, void* espacio_usuario, int tamanio_memoria, int retardo, t_log* logger);
+void ejecutar_escritura_stick(int cliente_fd, void* espacio_usuario, int tamanio_memoria, int retardo, t_log* logger);
 
 #endif /* STICK_UTILS_H_ */
