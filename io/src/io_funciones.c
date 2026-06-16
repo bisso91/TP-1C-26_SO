@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <utils/utils.h>
 
@@ -15,8 +16,7 @@ void iniciar_bucle_io(int conexion_scheduler, char *tipo_io, t_log *logger) {
     int cod_op = recibir_operacion(conexion_scheduler);
 
     if (cod_op == -1) {
-      log_error(logger,
-                "El Kernel Scheduler se desconecto. Terminando modulo IO");
+      log_error(logger,"El Kernel Scheduler se desconecto. Terminando modulo IO");
       break; // interrumpo el bucle
     }
 
@@ -25,16 +25,14 @@ void iniciar_bucle_io(int conexion_scheduler, char *tipo_io, t_log *logger) {
       if (strcmp(tipo_io, "SLEEP") == 0) {
         ejecutar_sleep(conexion_scheduler, logger);
       } else {
-        log_error(logger, "ERROR - tipo esperado: SLEEP. Tipo actual: %s",
-                  tipo_io);
+        log_error(logger, "ERROR - tipo esperado: SLEEP. Tipo actual: %s", tipo_io);
       }
       break;
     case IO_STDOUT:
       if (strcmp(tipo_io, "IO_STDOUT") == 0) {
         ejecutar_stdout(conexion_scheduler, logger);
       } else {
-        log_error(logger, "ERROR - tipo esperado: STDOUT. Tipo actual: %s",
-                  tipo_io);
+        log_error(logger, "ERROR - tipo esperado: STDOUT. Tipo actual: %s", tipo_io);
       }
       break;
     case IO_STDIN:
@@ -52,7 +50,7 @@ void iniciar_bucle_io(int conexion_scheduler, char *tipo_io, t_log *logger) {
 
     // Aca deberías avisarle al Kernel Scheduler que ya terminaste enviando un
     // paquete de respuesta enviar_mensaje("OK", conexion_scheduler);
-    break;
+    ;
   }
 }
 
@@ -84,7 +82,8 @@ void ejecutar_sleep(int conexion_shceduler, t_log *logger) {
   free(buffer);
 
   // notifico al planificador q terminé
-  enviar_mensaje("finalizó el modulo IO", conexion_shceduler);
+  enviar_aviso_termino(conexion_shceduler, pid);
+  //enviar_mensaje("finalizó el modulo IO", conexion_shceduler);
 }
 
 void ejecutar_stdin(int conexion_shceduler, t_log *logger) {
@@ -170,5 +169,17 @@ void ejecutar_stdout(int conexion_shceduler, t_log *logger) {
   eliminar_paquete(paquete_rta);
 
   // notifico al planificador q terminé
-  enviar_mensaje("finalizó el modulo IO", conexion_shceduler);
+  enviar_aviso_termino(conexion_shceduler, pid);
+  //enviar_mensaje("finalizó el modulo IO", conexion_shceduler);
+}
+
+void enviar_aviso_termino(int conexion_scheduler, int pid){
+  // mando opcode
+  int opcode = FIN_IO;
+  send(conexion_scheduler, &opcode, sizeof(int), 0);
+
+  // mando PID
+  enviar_entero(conexion_scheduler, pid);
+
+  //log_info(logger_server, "Notifiqué al scheduler que finalizó el PID %d", pid);
 }

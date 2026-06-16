@@ -71,6 +71,7 @@ int crear_conexion(char *ip, char *puerto) {
 }
 
 void liberar_conexion(int socket_cliente) { close(socket_cliente); }
+
 /*
 void enviar_mensaje(char *mensaje, int socket_cliente) {
   t_paquete *paquete = malloc(sizeof(t_paquete));
@@ -173,8 +174,22 @@ void recibir_mensaje(int socket_cliente, t_log *logger) {
   free(buffer);
 }
   */
+
+// --- --- //
+
+void enviar_entero(int socket_cliente, int numero){
+  send(socket_cliente, &numero, sizeof(int), 0);
+}
+
+int recibir_entero(int socket_cliente){
+  int numero;
+
+  recv(socket_cliente, &numero, sizeof(int), MSG_WAITALL); //MSG_WAITALL asegura que se lean todos los bytes del int antes de seguir
+  return numero;
+}
+
 // --- PCB --- //
-void enviar_pcb(t_pcb *pcb, int socket_cliente){
+void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code){
     // calculo tamaño del payload
     int size = sizeof(int) * 3; //PID, PC, estado
     void *stream = malloc(size);
@@ -190,7 +205,7 @@ void enviar_pcb(t_pcb *pcb, int socket_cliente){
 
     //
     t_paquete *paquete = crear_paquete();
-    paquete->cop = DISPATCH_PCB;
+    paquete->cop = op_code;
     agregar_a_paquete(paquete, stream, size);
     enviar_paquete(paquete, socket_cliente);
 
@@ -200,17 +215,17 @@ void enviar_pcb(t_pcb *pcb, int socket_cliente){
 
 t_pcb *recibir_pcb(int socket_cliente){
     t_pcb *pcb = malloc(sizeof(t_pcb));
-    int size;
-    int desplazamiento = 0;
+    int size_total;
 
-    void *stream = recibir_buffer(&size, socket_cliente);
+    void *stream = recibir_buffer(&size_total, socket_cliente); 
+    
+    int desplazamiento = sizeof(int);
 
     memcpy(&(pcb->pid), stream + desplazamiento, sizeof(int));
     desplazamiento += sizeof(int);
     memcpy(&(pcb->program_counter), stream + desplazamiento, sizeof(int));
     desplazamiento += sizeof(int);
     memcpy(&(pcb->estado), stream + desplazamiento, sizeof(int));
-    desplazamiento += sizeof(int);
 
     free(stream);
     return pcb;
@@ -286,7 +301,6 @@ void enviar_paquete(t_paquete *paquete, int socket_cliente) {
   free(a_enviar);
 }
 
-
 void eliminar_paquete(t_paquete *paquete) {
   free(paquete->buffer->stream);
   free(paquete->buffer);
@@ -316,4 +330,27 @@ void recibir_mensaje(int socket_cliente, t_log *logger) {
   char *buffer = recibir_buffer(&size, socket_cliente);
   log_info(logger, "Mensaje recibido: %s", buffer);
   free(buffer);
+}
+
+char* recibir_string(int socket_cliente) {
+    int size;
+    char *buffer = recibir_buffer(&size, socket_cliente);
+    return buffer;
+}
+
+void enviar_string(char *mensaje, int socket_cliente, op_code cop) {
+  t_paquete *paquete = malloc(sizeof(t_paquete));
+  paquete->cop = cop;
+  paquete->buffer = malloc(sizeof(t_buffer));
+  paquete->buffer->size = strlen(mensaje) + 1;
+  paquete->buffer->stream = malloc(paquete->buffer->size);
+  memcpy(paquete->buffer->stream, mensaje, paquete->buffer->size);
+
+  int bytes = paquete->buffer->size + 2 * sizeof(int);
+  void *a_enviar = serializar_paquete(paquete, bytes);
+
+  send(socket_cliente, a_enviar, bytes, 0);
+
+  free(a_enviar);
+  eliminar_paquete(paquete);
 }

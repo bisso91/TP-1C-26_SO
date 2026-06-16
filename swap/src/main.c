@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
 
     //conecto al ip y al mismo puerto que el kernel_memory
     int conexion = crear_conexion(ip, puerto);
-    if (conexion != 1) {
+    if (conexion != -1) {
         log_info(logger, "## Conectado exitosamente al servidor en %s:%s", ip, puerto);
     } else {
         log_error(logger, "Error al intentar conectarse al servidor");
