@@ -1,3 +1,4 @@
+
 #ifndef UTILS_H_
 #define UTILS_H_
 
@@ -77,6 +78,8 @@ typedef struct{
     int pid;
     int program_counter;
     t_estado estado;
+    int prioridad_actual;
+    int prioridad_original;
     // agregar registro cpu y otros
 } t_pcb;
 
