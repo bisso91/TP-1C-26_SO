@@ -38,10 +38,10 @@ int main(int argc, char *argv[]) {
 
   // conecto al ip y al mismo puerto que el kernel_memory
   int conexion_scheduler = crear_conexion(ip, puerto);
-  if (conexion_scheduler != 1) {
+  if (conexion_scheduler != -1) {
     log_info(logger, "## Conectado a Kernel Scheduler");
     log_info(logger, "## Conectado en puerto: %s con IP: %s", puerto, ip);
-    enviar_mensaje("¡Hola Kernel Scheduler! Soy el modulo IO reportandome", conexion_scheduler);
+    enviar_string(tipo_io, conexion_scheduler, IDENTIFICACION_IO);
     
     // bucle de IN/OUT
     iniciar_bucle_io(conexion_scheduler, tipo_io, logger);

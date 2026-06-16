@@ -1,5 +1,6 @@
-#include "cpu_utils.h"
+#include "funciones_cpu.h"
 #include <stdbool.h>
+#include <pthread.h>
 
 t_log *logger_cpu = NULL;
 t_config *config_plana = NULL;
@@ -53,7 +54,7 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
 
   // 5-Conexiones
   // MEMORIA--->Aca soy cliente
-  log_trace(logger_cpu, "Creando conexion a Memory_Scheduler...");
+  log_trace(logger_cpu, "Creando conexion a Memory...");
   fd_memory = crear_conexion(config_cpu.ip_memory, config_cpu.puerto_memory);
   if (fd_memory == -1) {
     log_error(logger_cpu, "No se pudo iniciar conexion con Memoria");
@@ -61,26 +62,36 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
   }
   log_info(logger_cpu, "Conexion establecida con Memoria Central (FD: %d)",
            fd_memory);
-  // Chiche, le mando un handshake
-  uint8_t id_numerico = (uint8_t)atoi(id_cpu); // Aca standarizo el id
-  // Si entendi bien con esto deberia andar
-  ssize_t bytes_enviados =
-      send(fd_memory, &id_numerico, sizeof(uint8_t), MSG_NOSIGNAL);
-  if (bytes_enviados <= 0) {
-    log_error(logger_cpu, "Fallo al enviar el Handshake (ID: %d) a Memoria",
-              id_numerico);
-    exit(EXIT_FAILURE);
-  } else {
-    log_trace(logger_cpu,
-              "Handshake enviado exitosamente a Memoria (ID de CPU: %d)",
-              id_numerico);
-  }
-  // DISPATCH E INTERRUPT
+  // No handshake is sent to Memory as Memory does not have handshake logic.
 
-  fd_dispatch =
-      iniciar_servidor(config_cpu.puerto_escucha_dispatch, logger_cpu);
-  fd_interrupt =
-      iniciar_servidor(config_cpu.puerto_escucha_interrupt, logger_cpu);
+  // DISPATCH E INTERRUPT (Conexiones al Scheduler como cliente)
+  log_info(logger_cpu, "Conectando a Scheduler Dispatch en %s:%s...", config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  fd_dispatch = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  if (fd_dispatch == -1) {
+    log_error(logger_cpu, "No se pudo conectar a Scheduler Dispatch");
+    exit(EXIT_FAILURE);
+  }
+  // Enviar identificación
+  int cop_dispatch = IDENTIFICACION_CPU_DISPATCH;
+  send(fd_dispatch, &cop_dispatch, sizeof(int), 0);
+  log_info(logger_cpu, "Conexion establecida con Scheduler Dispatch (FD: %d)", fd_dispatch);
+
+  log_info(logger_cpu, "Conectando a Scheduler Interrupt en %s:%s...", config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  fd_interrupt = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  if (fd_interrupt == -1) {
+    log_error(logger_cpu, "No se pudo conectar a Scheduler Interrupt");
+    exit(EXIT_FAILURE);
+  }
+  // Enviar identificación
+  int cop_interrupt = IDENTIFICACION_CPU_INTERRUPT;
+  send(fd_interrupt, &cop_interrupt, sizeof(int), 0);
+  log_info(logger_cpu, "Conexion establecida con Scheduler Interrupt (FD: %d)", fd_interrupt);
+
+  // Levantar hilo de interrupciones
+  pthread_t thread_interrupt;
+  extern void *interrupt_server(void *arg);
+  pthread_create(&thread_interrupt, NULL, interrupt_server, NULL);
+  pthread_detach(thread_interrupt);
 
   log_info(logger_cpu, "### CPU Iniciada con ID: %s", id_cpu);
 
@@ -172,8 +183,8 @@ VIENDO SI SIGO USANDOLA*/
 
 // FUNCIONES PARA RECIBIR DATOS...
 
-// 1 Para recibir solo el número del código de operación
-int recibir_operacion(int socket_cliente, t_log *logger) {
+// 1 Para recibir solo el número del código de operación // <-- Renombrada
+int recibir_operacion_cpu(int socket_cliente, t_log *logger) {
   int cod_op;
 
   // Intentamos recibir el código de operación
@@ -196,13 +207,4 @@ int recibir_operacion(int socket_cliente, t_log *logger) {
     close(socket_cliente);
     return -1;
   }
-}
-
-// 2 Para recibir el "cuerpo" del mensaje...si viene con datos
-void *recibir_buffer(int *size, int socket_cliente) {
-  void *buffer;
-  recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
-  buffer = malloc(*size);
-  recv(socket_cliente, buffer, *size, MSG_WAITALL);
-  return buffer;
 }

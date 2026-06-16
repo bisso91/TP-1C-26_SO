@@ -46,6 +46,7 @@ extern pthread_mutex_t mutex_exit;
 extern sem_t sem_procesos_en_new;
 extern sem_t sem_grado_multiprogramacion;
 extern sem_t sem_procesos_en_ready;
+extern sem_t sem_cpu_libre; 
 // --------------------------------- //
 
 // --- Diccionario para guardar los sockets de IO --- //
@@ -57,6 +58,9 @@ extern pthread_mutex_t mutex_interfaces_io;
 // --- socket --- //
 extern int socket_cpu_dispatch;
 extern int socket_cpu_interrupt;
+extern int socket_kernel_memory;
+extern int active_stdin_pid;
+extern int active_stdout_pid;
 
 // --------------------------------- //
 

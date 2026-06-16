@@ -42,6 +42,7 @@ typedef struct {
 extern t_log *logger_cpu;
 extern t_config *config_plana;
 extern t_config_cpu config_cpu;
+extern t_registros registros;
 
 extern int kernel_interrupt_fd;
 extern uint32_t interrupted_pid;
@@ -55,6 +56,6 @@ int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
 bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
                           t_log *logger);
 bool inicializar_registros(t_registros *registros, t_log *logger);
-int recibir_operacion(int socket_cliente, t_log *logger);
+int recibir_operacion_cpu(int socket_cliente, t_log *logger); // <-- Renombrada para evitar conflicto
 
 #endif

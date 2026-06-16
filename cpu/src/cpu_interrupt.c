@@ -1,14 +1,13 @@
 #include "cpu_interrupt.h"
-#include "cpu_utils.h"
+#include "funciones_cpu.h"
 
-void *interrupt_server(void *) {
+void *interrupt_server(void *arg) {
 
   int err;
   // INICIALIZACION_CONEXION
   log_trace(logger_cpu, "Inicio el Thread de Interrupt");
-  kernel_interrupt_fd = esperar_cliente(fd_interrupt);
-  log_trace(logger_cpu, "Kernel se conecto a CPU_INTERRUPT!");
-  // sem_post(&initialization_mutex);
+  kernel_interrupt_fd = fd_interrupt;
+  log_trace(logger_cpu, "Kernel interrupt socket asignado!");
 
   while (1) {
     log_trace(logger_cpu, "INTERRUPT: Esperando nueva interrupcion...");
@@ -22,7 +21,6 @@ void *interrupt_server(void *) {
     log_trace(logger_cpu, "INTERRUPT: Se recibio interrupcion para el PID: %d",
               interrupted_pid);
   }
-  // IMPLEMENTAR FIN DE BUCLE*
   close(kernel_interrupt_fd);
   return NULL;
 }

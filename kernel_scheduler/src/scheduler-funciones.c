@@ -20,6 +20,7 @@ pthread_mutex_t mutex_block;
 pthread_mutex_t mutex_exit;
 
 sem_t sem_procesos_en_new;
+sem_t sem_cpu_libre;
 
 t_dictionary *interfaces_io;
 pthread_mutex_t mutex_interfaces_io;
@@ -67,6 +68,10 @@ void *planificador_largo_plazo(void *arg){
 
 void *planificador_corto_plazo_fifo(void *arg){
     while (1){
+        while(socket_cpu_dispatch == -1) {
+            usleep(100 * 1000);
+        }
+        sem_wait(&sem_cpu_libre); // Espera a que la CPU esté libre
         sem_wait(&sem_procesos_en_ready);
 
         pthread_mutex_lock(&mutex_ready);
@@ -131,7 +136,7 @@ void finalizar_proceso(t_pcb *pcb, char *motivo){
     log_info(logger_server, "## (%d) finalizó su ejecución con motivo de %s", pcb->pid, motivo);
 
     sem_post(&sem_grado_multiprogramacion);
-
+    sem_post(&sem_cpu_libre);
 }
 
 t_pcb *sacar_de_cola_block(int pid){
@@ -176,6 +181,10 @@ void *temporizador_quantum(void *arg){
 
 void *planificador_corto_plazo_rr(void *arg){
     while(1){
+        while(socket_cpu_dispatch == -1) {
+            usleep(100 * 1000);
+        }
+        sem_wait(&sem_cpu_libre); // Espera a que la CPU esté libre
         sem_wait(&sem_procesos_en_ready);
 
         pthread_mutex_lock(&mutex_ready);
@@ -183,7 +192,7 @@ void *planificador_corto_plazo_rr(void *arg){
         pthread_mutex_unlock(&mutex_ready);
 
         pcb_a_ejecutar->estado = ESTADO_EXEC;
-        log_info(logger_server, "## (PPID %d) Pasa a estada EXEC (round robin)", pcb_a_ejecutar->pid);
+        log_info(logger_server, "## (PID %d) Pasa a estado EXEC (round robin)", pcb_a_ejecutar->pid);
 
         pthread_t hilo_timer;
         int *pid_prt = malloc(sizeof(int));
@@ -192,7 +201,12 @@ void *planificador_corto_plazo_rr(void *arg){
         pthread_detach(hilo_timer);
 
         // Enviamos el PCB a la CPU para que trabaje
-        // enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, EJECUTAR_PROCESO);
+        if(socket_cpu_dispatch != -1){
+            log_info(logger_server, "Despachando proceso PID: %d a la CPU...", pcb_a_ejecutar->pid);
+            enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, DISPATCH_PCB);
+        } else {
+            log_error(logger_server, "Error: La CPU no esta conectada aún");
+        }
     }
     return NULL;
 }
@@ -202,7 +216,7 @@ void *planificador_corto_plazo_rr(void *arg){
 void inicializar_recursos(char **nombres, char **instancias){
     recursos_sistema = dictionary_create();
 
-    for (int i = 0; nombres[1] != NULL; i++){
+    for (int i = 0; nombres[i] != NULL; i++){
         t_recurso * recurso_nuevo = malloc(sizeof(t_recurso));
         recurso_nuevo->instancias = atoi(instancias[i]);
         recurso_nuevo->cola_bloqueados = queue_create();
@@ -218,7 +232,8 @@ void solicitar_recurso_wait(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
 
     if (recurso == NULL){
         log_error(logger_server, "El recurso %s no existe. Abortando PID %d", nombre_recurso, pcb->pid);
-        // cambiar estado a EXIT y liberar
+        finalizar_proceso(pcb, "RECURSO_INEXISTENTE");
+        sem_post(&sem_cpu_libre);
         return;
     }
 
@@ -226,44 +241,57 @@ void solicitar_recurso_wait(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
     recurso->instancias--;
 
     if(recurso->instancias < 0){
-        // si no hay instancias: va a la cola del mutex, no a la de IO
         log_info(logger_server, "## (PID: %d) Bloqueado por espera de recurso %s", pcb->pid, nombre_recurso);
         pcb->estado = ESTADO_BLOCK;
         queue_push(recurso->cola_bloqueados, pcb);
     } else {
-        // si hay instancias: se le da el permiso y la CPU puede continuar
         log_info(logger_server, "## (PID: %d) Asignado al recurso %s. Continúa ejecutando.", pcb->pid, nombre_recurso);
-        //devuelvo pcb y un OK a la cpu para que retome elciclo de instruccion
-        //enviar_pcb(pcb, cliente_fd, WAIT_OK);
+        pcb->estado = ESTADO_READY;
+        pthread_mutex_lock(&mutex_ready);
+        queue_push(cola_ready, pcb);
+        pthread_mutex_unlock(&mutex_ready);
+        sem_post(&sem_procesos_en_ready);
     }
     pthread_mutex_unlock(&(recurso->mutex_recurso));
+
+    sem_post(&sem_cpu_libre);
 }
+
 void liberar_recurso_signal(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
     t_recurso *recurso = dictionary_get(recursos_sistema, nombre_recurso);
 
     if(recurso == NULL){
         log_error(logger_server, "El recurso %s no existe", nombre_recurso);
+        pcb->estado = ESTADO_READY;
+        pthread_mutex_lock(&mutex_ready);
+        queue_push(cola_ready, pcb);
+        pthread_mutex_unlock(&mutex_ready);
+        sem_post(&sem_procesos_en_ready);
+        sem_post(&sem_cpu_libre);
         return;
     }
 
     pthread_mutex_lock(&(recurso->mutex_recurso));
     recurso->instancias++;
 
-    //si hay algun proceso  esperandoo eeste recurso lo despierto
     if (queue_size(recurso->cola_bloqueados) > 0){
         t_pcb *pcb_desbloqueado = queue_pop(recurso->cola_bloqueados);
-
-        log_info(logger_server, "## (PID: %d) Desbloqueado del recruso %s. Pasando a READY.", pcb_desbloqueado->pid, nombre_recurso);
+        log_info(logger_server, "## (PID: %d) Desbloqueado del recurso %s. Pasando a READY.", pcb_desbloqueado->pid, nombre_recurso);
 
         pcb_desbloqueado->estado = ESTADO_READY;
-
         pthread_mutex_lock(&mutex_ready);
         queue_push(cola_ready, pcb_desbloqueado);
         pthread_mutex_unlock(&mutex_ready);
+        sem_post(&sem_procesos_en_ready);
     }
     pthread_mutex_unlock(&(recurso->mutex_recurso));
 
-    // El proceso actual (el que hizo Signal) retiene la CPU y sigue ejecutando
-    // enviar_pcb(pcb, cliente_fd, SIGNAL_OK);
+    pcb->estado = ESTADO_READY;
+    pthread_mutex_lock(&mutex_ready);
+    queue_push(cola_ready, pcb);
+    pthread_mutex_unlock(&mutex_ready);
+    sem_post(&sem_procesos_en_ready);
+
+    sem_post(&sem_cpu_libre);
 }
 // =========================================== //
