@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <poll.h>
 #include <utils/hello.h>
 #include <utils/utils.h>
 
@@ -92,12 +93,94 @@ void *atender_cliente(void *arg) {
                 log_info(logger, "Simulando espacio libre (MOCK) = %u", espacio_falso);
                 break;
             }
-            case LEER_MEMORIA:
+            case LEER_MEMORIA: {
+                struct pollfd pfd;
+                pfd.fd = cliente_fd;
+                pfd.events = POLLIN;
+                int poll_res = poll(&pfd, 1, 0);
+                if (poll_res > 0 && (pfd.revents & POLLIN)) {
+                    int size_total;
+                    void *stream = recibir_buffer(&size_total, cliente_fd);
+                    
+                    int desplazamiento = sizeof(int); // skip pid size (4)
+                    int pid;
+                    memcpy(&pid, stream + desplazamiento, sizeof(int));
+                    desplazamiento += sizeof(int);
+                    
+                    desplazamiento += sizeof(int); // skip dir size (4)
+                    int dir_fisica;
+                    memcpy(&dir_fisica, stream + desplazamiento, sizeof(int));
+                    desplazamiento += sizeof(int);
+                    
+                    desplazamiento += sizeof(int); // skip size size (4)
+                    int tamanio;
+                    memcpy(&tamanio, stream + desplazamiento, sizeof(int));
+                    
+                    free(stream);
+                    
+                    void *valor_mock = calloc(1, tamanio);
+                    if (tamanio == 1) {
+                        *(uint8_t*)valor_mock = 0x2A; // 42 in hex
+                    } else if (tamanio == 4) {
+                        *(uint32_t*)valor_mock = 42;
+                    }
+                    send(cliente_fd, valor_mock, tamanio, 0);
+                    free(valor_mock);
+                    log_info(logger, "Simulando éxito en LECTURA de memoria (PID: %d, Dir: %d, Tam: %d).", pid, dir_fisica, tamanio);
+                } else {
+                    int ok = 1;
+                    send(cliente_fd, &ok, sizeof(int), 0);
+                    log_info(logger, "Simulando éxito en LECTURA de memoria (MOCK raw).");
+                }
+                break;
+            }
+
             case ESCRIBIR_MEMORIA: {
-                // Mockeo de lectura
-                int ok = 1;
-                send(cliente_fd, &ok, sizeof(int), 0);
-                log_info(logger, "Simulando éxito en lectura/escritura de memoria (MOCK).");
+                struct pollfd pfd;
+                pfd.fd = cliente_fd;
+                pfd.events = POLLIN;
+                int poll_res = poll(&pfd, 1, 0);
+                if (poll_res > 0 && (pfd.revents & POLLIN)) {
+                    int size_total;
+                    void *stream = recibir_buffer(&size_total, cliente_fd);
+                    
+                    int desplazamiento = sizeof(int); // skip pid size (4)
+                    int pid;
+                    memcpy(&pid, stream + desplazamiento, sizeof(int));
+                    desplazamiento += sizeof(int);
+                    
+                    desplazamiento += sizeof(int); // skip dir size (4)
+                    int dir_fisica;
+                    memcpy(&dir_fisica, stream + desplazamiento, sizeof(int));
+                    desplazamiento += sizeof(int);
+                    
+                    desplazamiento += sizeof(int); // skip size size (4)
+                    int tamanio;
+                    memcpy(&tamanio, stream + desplazamiento, sizeof(int));
+                    desplazamiento += sizeof(int);
+                    
+                    desplazamiento += sizeof(int); // skip value size (4)
+                    void *valor = malloc(tamanio);
+                    memcpy(valor, stream + desplazamiento, tamanio);
+                    
+                    free(stream);
+                    
+                    if (tamanio == 1) {
+                        log_info(logger, "Simulando éxito en ESCRITURA (PID: %d, Dir: %d, Tam: 1, Val: %u).", pid, dir_fisica, *(uint8_t*)valor);
+                    } else if (tamanio == 4) {
+                        log_info(logger, "Simulando éxito en ESCRITURA (PID: %d, Dir: %d, Tam: 4, Val: %u).", pid, dir_fisica, *(uint32_t*)valor);
+                    } else {
+                        log_info(logger, "Simulando éxito en ESCRITURA (PID: %d, Dir: %d, Tam: %d).", pid, dir_fisica, tamanio);
+                    }
+                    free(valor);
+                    
+                    int ok = 1;
+                    send(cliente_fd, &ok, sizeof(int), 0);
+                } else {
+                    int ok = 1;
+                    send(cliente_fd, &ok, sizeof(int), 0);
+                    log_info(logger, "Simulando éxito en ESCRITURA de memoria (MOCK raw).");
+                }
                 break;
             }
 

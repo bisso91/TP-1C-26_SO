@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <utils/utils.h>
+#include "cpu_utils.h"
 
 // Defino estructura del .config
 typedef struct {
@@ -52,6 +53,8 @@ extern int fd_interrupt;
 extern int fd_dispatch;
 
 // --- PROTOTIPOS ---
+void inicializar_cpu(char *config_path, char *id_cpu);
+void finalizar_cpu();
 int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
 bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
                           t_log *logger);

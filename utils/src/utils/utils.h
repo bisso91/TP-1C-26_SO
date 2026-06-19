@@ -77,11 +77,19 @@ typedef enum{
     ESTADO_EXIT
 } t_estado;
 
+typedef struct {
+    int id;
+    int base;
+    int limite;
+} t_segmento;
+
 // --- PROCESS CONTROL BLOCK (PCB)--- //
 typedef struct{
     int pid;
     int program_counter;
     t_estado estado;
+    int cantidad_segmentos;
+    t_segmento *tabla_segmentos;
     int prioridad_actual;
     int prioridad_original;
     // agregar registro cpu y otros
