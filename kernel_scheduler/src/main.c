@@ -182,6 +182,8 @@ void crear_proceso_inicial(char *path_proceso) {
     nuevo_pcb->pid = nuevo_pid;
     nuevo_pcb->program_counter = 0;
     nuevo_pcb->estado = ESTADO_NEW;
+    nuevo_pcb->cantidad_segmentos = 0;
+    nuevo_pcb->tabla_segmentos = NULL;
 
     pthread_mutex_lock(&mutex_new);
     queue_push(cola_new, nuevo_pcb);
@@ -415,6 +417,8 @@ void *atender_cliente(void *arg){
       nuevo_pcb->pid = nuevo_pid;
       nuevo_pcb->program_counter = 0;
       nuevo_pcb->estado = ESTADO_NEW;
+      nuevo_pcb->cantidad_segmentos = 0;
+      nuevo_pcb->tabla_segmentos = NULL;
 
       pthread_mutex_lock(&mutex_new);
       queue_push(cola_new, nuevo_pcb);
