@@ -1,0 +1,3 @@
+INIT_PROC proceso_low.txt 3
+INIT_PROC proceso_high.txt 1
+EXIT

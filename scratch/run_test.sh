@@ -12,7 +12,7 @@ sleep 1
 
 echo "Starting Kernel Scheduler..."
 cd /home/cesar/Documentos/utn/tpso/tp-2026-1c-cortisolmaxxing/kernel_scheduler
-./bin/kernel_scheduler ./kernel_scheduler.config proceso1.txt > ../logs/scheduler.log 2>&1 &
+./bin/kernel_scheduler ./kernel_scheduler.config proceso_main.txt > ../logs/scheduler.log 2>&1 &
 PID_SCHED=$!
 
 sleep 1
@@ -22,7 +22,7 @@ cd /home/cesar/Documentos/utn/tpso/tp-2026-1c-cortisolmaxxing/cpu
 ./bin/cpu ./cpu.config 1 > ../logs/cpu.log 2>&1 &
 PID_CPU=$!
 
-sleep 4
+sleep 15
 
 echo "Stopping all processes..."
 kill $PID_MEM $PID_SCHED $PID_CPU 2>/dev/null
