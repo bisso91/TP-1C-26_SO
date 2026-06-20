@@ -1,3 +1,4 @@
+
 #include "utils.h"
 #include <commons/log.h>
 #include <netdb.h>
@@ -191,7 +192,7 @@ int recibir_entero(int socket_cliente){
 // --- PCB --- //
 void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code){
     // calculo tamaño del payload
-    int size = sizeof(int) * 3; //PID, PC, estado
+    int size = sizeof(int) * 4 + pcb->cantidad_segmentos * sizeof(t_segmento); //PID, PC, estado, prioridad_actual, prioridad_original
     void *stream = malloc(size);
     int desplazamiento = 0;
 
@@ -202,8 +203,18 @@ void enviar_pcb(t_pcb *pcb, int socket_cliente, int op_code){
     desplazamiento += sizeof(int);
     memcpy(stream + desplazamiento, &(pcb->estado), sizeof(int));
     desplazamiento += sizeof(int);
+    memcpy(stream + desplazamiento, &(pcb->cantidad_segmentos), sizeof(int));
+    desplazamiento += sizeof(int);
 
-    //
+    if (pcb->cantidad_segmentos > 0 && pcb->tabla_segmentos != NULL) {
+        memcpy(stream + desplazamiento, pcb->tabla_segmentos, pcb->cantidad_segmentos * sizeof(t_segmento));
+        desplazamiento += pcb->cantidad_segmentos * sizeof(t_segmento);
+    }
+    memcpy(stream + desplazamiento, &(pcb->prioridad_actual), sizeof(int));
+    desplazamiento += sizeof(int);
+    memcpy(stream + desplazamiento, &(pcb->prioridad_original), sizeof(int));
+    desplazamiento += sizeof(int);
+
     t_paquete *paquete = crear_paquete();
     paquete->cop = op_code;
     agregar_a_paquete(paquete, stream, size);
@@ -226,6 +237,19 @@ t_pcb *recibir_pcb(int socket_cliente){
     memcpy(&(pcb->program_counter), stream + desplazamiento, sizeof(int));
     desplazamiento += sizeof(int);
     memcpy(&(pcb->estado), stream + desplazamiento, sizeof(int));
+    desplazamiento += sizeof(int);
+    memcpy(&(pcb->cantidad_segmentos), stream + desplazamiento, sizeof(int));
+    desplazamiento += sizeof(int);
+
+    if (pcb->cantidad_segmentos > 0) {
+        pcb->tabla_segmentos = malloc(pcb->cantidad_segmentos * sizeof(t_segmento));
+        memcpy(pcb->tabla_segmentos, stream + desplazamiento, pcb->cantidad_segmentos * sizeof(t_segmento));
+    } else {
+        pcb->tabla_segmentos = NULL;
+    }
+    memcpy(&(pcb->prioridad_actual), stream + desplazamiento, sizeof(int));
+    desplazamiento += sizeof(int);
+    memcpy(&(pcb->prioridad_original), stream + desplazamiento, sizeof(int));
 
     free(stream);
     return pcb;

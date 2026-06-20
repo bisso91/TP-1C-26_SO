@@ -1,3 +1,4 @@
+
 #ifndef UTILS_H_
 #define UTILS_H_
 
@@ -50,7 +51,11 @@ typedef enum {
   PEDIR_INSTRUCCION,
   CONSULTAR_ESPACIO_LIBRE,
   LEER_MEMORIA,
-  ESCRIBIR_MEMORIA
+  ESCRIBIR_MEMORIA,
+  LEER_BLOQUE_STICK,
+  ESCRIBIR_BLOQUE_STICK,
+  IDENTIFICACION_STICK,
+  IDENTIFICACION_CPU
 } op_code;
 
 // fn server
@@ -72,11 +77,21 @@ typedef enum{
     ESTADO_EXIT
 } t_estado;
 
+typedef struct {
+    int id;
+    int base;
+    int limite;
+} t_segmento;
+
 // --- PROCESS CONTROL BLOCK (PCB)--- //
 typedef struct{
     int pid;
     int program_counter;
     t_estado estado;
+    int cantidad_segmentos;
+    t_segmento *tabla_segmentos;
+    int prioridad_actual;
+    int prioridad_original;
     // agregar registro cpu y otros
 } t_pcb;
 

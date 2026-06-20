@@ -8,11 +8,14 @@
 #include <stdlib.h>
 #include <utils/utils.h>
 #include <commons/collections/dictionary.h>
+#include <commons/collections/list.h>
+#include <commons/string.h>
 
 typedef struct{
     int instancias;
     t_queue *cola_bloqueados; // cada instancia tiene su cola
     pthread_mutex_t mutex_recurso; // protege la instancia y las colas
+    int pid_dueno; // PID del proceso dueño (-1 si está libre)
 } t_recurso;
 
 // --- VARIABLES GLOBALES (compartidas) --- //
@@ -20,6 +23,17 @@ extern t_log *logger_server;
 extern char *algoritmo_de_planificacion;
 extern int quantum;
 extern t_dictionary *recursos_sistema;
+extern t_list *nombres_recursos_global;
+
+// --- ESTRUCTURA DE CONTROL DE PRIORIDADES EN SCHEDULER --- //
+typedef struct {
+    int pid;
+    int prioridad_original;
+    int prioridad_actual;
+} t_proceso_prioridad;
+
+extern t_dictionary *prioridades_procesos;
+extern pthread_mutex_t mutex_prioridades;
 
 // --- files descriptors de CPU (revisar si son globales) preguntar a fede --- //
 extern int socket_cpu_dispatch;
@@ -84,5 +98,13 @@ void *temporizador_quantum(void *arg);
 void *planificador_corto_plazo_rr(void *arg);
 
 t_pcb *sacar_de_cola_block(int pid);
+
+// --- FUNCIONES GESTION DE PRIORIDADES E INVERSION --- //
+void registrar_prioridad(int pid, int prioridad);
+void eliminar_prioridad(int pid);
+void actualizar_prioridades_pcb(t_pcb *pcb);
+int obtener_max_prioridad_bloqueados(t_recurso *recurso);
+void recalcular_prioridad(t_pcb *pcb);
+void aplicar_herencia_prioridad(int pid_esperando, int pid_dueno, t_recurso *recurso_bloqueante);
 
 #endif

@@ -48,6 +48,10 @@ int main(int argc, char *argv[]) {
   interfaces_io = dictionary_create();
   io_pending_addresses = dictionary_create();
 
+  prioridades_procesos = dictionary_create();
+  pthread_mutex_init(&mutex_prioridades, NULL);
+  nombres_recursos_global = list_create();
+
   pthread_mutex_init(&mutex_new, NULL);
   pthread_mutex_init(&mutex_ready, NULL);
   pthread_mutex_init(&mutex_block, NULL);
@@ -182,6 +186,12 @@ void crear_proceso_inicial(char *path_proceso) {
     nuevo_pcb->pid = nuevo_pid;
     nuevo_pcb->program_counter = 0;
     nuevo_pcb->estado = ESTADO_NEW;
+    nuevo_pcb->cantidad_segmentos = 0;
+    nuevo_pcb->tabla_segmentos = NULL;
+    nuevo_pcb->prioridad_actual = 0;
+    nuevo_pcb->prioridad_original = 0;
+
+    registrar_prioridad(nuevo_pid, 0);
 
     pthread_mutex_lock(&mutex_new);
     queue_push(cola_new, nuevo_pcb);
@@ -223,6 +233,7 @@ void *atender_cliente(void *arg){
 
     case IO_SLEEP: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
       int milisegundos = recibir_entero(cliente_fd);
 
       log_info(logger_server, "## (%d) Solicitó syscall: SLEEP", pcb->pid);
@@ -289,6 +300,7 @@ void *atender_cliente(void *arg){
       } else {
         // Request from CPU!
         t_pcb *pcb = recibir_pcb(cliente_fd);
+        actualizar_prioridades_pcb(pcb);
         int direccion_logica = recibir_entero(cliente_fd);
         int size_to_read = recibir_entero(cliente_fd);
 
@@ -324,6 +336,7 @@ void *atender_cliente(void *arg){
 
     case IO_STDOUT: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
       int direccion_logica = recibir_entero(cliente_fd);
       int size_to_read = recibir_entero(cliente_fd);
 
@@ -381,6 +394,8 @@ void *atender_cliente(void *arg){
 
     case WAIT_RECURSO: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
+      int cop_string = recibir_operacion(cliente_fd);
       char *nombre_recurso = recibir_string(cliente_fd);
       solicitar_recurso_wait(pcb, nombre_recurso, cliente_fd);
       free(nombre_recurso);
@@ -388,6 +403,8 @@ void *atender_cliente(void *arg){
     }
     case SIGNAL_RECURSO: {
       t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
+      int cop_string = recibir_operacion(cliente_fd);
       char *nombre_recurso = recibir_string(cliente_fd);
       liberar_recurso_signal(pcb, nombre_recurso, cliente_fd);
       free(nombre_recurso);
@@ -395,6 +412,8 @@ void *atender_cliente(void *arg){
     }
     case INIT_PROC: {
       t_pcb *pcb_creador = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb_creador);
+      int cop_string = recibir_operacion(cliente_fd);
       char *path_proceso = recibir_string(cliente_fd);
       int prioridad = recibir_entero(cliente_fd);
 
@@ -415,6 +434,12 @@ void *atender_cliente(void *arg){
       nuevo_pcb->pid = nuevo_pid;
       nuevo_pcb->program_counter = 0;
       nuevo_pcb->estado = ESTADO_NEW;
+      nuevo_pcb->cantidad_segmentos = 0;
+      nuevo_pcb->tabla_segmentos = NULL;
+      nuevo_pcb->prioridad_actual = prioridad;
+      nuevo_pcb->prioridad_original = prioridad;
+
+      registrar_prioridad(nuevo_pid, prioridad);
 
       pthread_mutex_lock(&mutex_new);
       queue_push(cola_new, nuevo_pcb);
@@ -437,6 +462,7 @@ void *atender_cliente(void *arg){
 
     case FIN_QUANTUM: {
       t_pcb *pcb_desalojado = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb_desalojado);
       log_info(logger_server, "## (%d) - Desalojado por fin de quantum", pcb_desalojado->pid);
 
       pcb_desalojado->estado = ESTADO_READY;
@@ -451,11 +477,13 @@ void *atender_cliente(void *arg){
     }
     case FIN_PROCESO: {
       t_pcb *pcb_finalizado = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb_finalizado);
       finalizar_proceso(pcb_finalizado, "SUCCESS");
       break;
     }
     case SEGMENTATION_FAULT: {
       t_pcb *pcb_error = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb_error);
       finalizar_proceso(pcb_error, "SEG_FAULT");
       break;
     }
