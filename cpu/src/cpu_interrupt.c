@@ -11,15 +11,24 @@ void *interrupt_server(void *arg) {
 
   while (1) {
     log_trace(logger_cpu, "INTERRUPT: Esperando nueva interrupcion...");
-    err = recv(kernel_interrupt_fd, &interrupted_pid, sizeof(uint32_t),
-               MSG_WAITALL);
-
+    int op;
+    err = recv(kernel_interrupt_fd, &op, sizeof(int), MSG_WAITALL);
     if (err <= 0) {
-      log_error(logger_cpu, "Se Desconectó el Kernel");
+      log_error(logger_cpu, "Se Desconectó el Kernel (Interrupt)");
       exit(EXIT_FAILURE);
     }
-    log_trace(logger_cpu, "INTERRUPT: Se recibio interrupcion para el PID: %d",
-              interrupted_pid);
+    
+    uint32_t pid;
+    err = recv(kernel_interrupt_fd, &pid, sizeof(uint32_t), MSG_WAITALL);
+    if (err <= 0) {
+      log_error(logger_cpu, "Se Desconectó el Kernel (Interrupt PID)");
+      exit(EXIT_FAILURE);
+    }
+
+    interrupted_pid = pid;
+    interrupt_op = op;
+    log_trace(logger_cpu, "INTERRUPT: Se recibio interrupcion (op: %d) para el PID: %u",
+              op, interrupted_pid);
   }
   close(kernel_interrupt_fd);
   return NULL;

@@ -144,26 +144,23 @@ int main(int argc, char *argv[]) {
             desaloja = true;
           } else {
             log_info(logger_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Dirección Lógica: %u", pcb->pid, dir_fisica, dir_logica);
-            // Enviar paquete LEER_MEMORIA a Kernel Memory
-            t_paquete *paquete_km = crear_paquete();
-            paquete_km->cop = LEER_MEMORIA;
-            agregar_a_paquete(paquete_km, &(pcb->pid), sizeof(int));
-            agregar_a_paquete(paquete_km, &dir_fisica, sizeof(int));
-            agregar_a_paquete(paquete_km, &tamanio, sizeof(int));
-            enviar_paquete(paquete_km, fd_memory);
-            eliminar_paquete(paquete_km);
             
-            // Esperar la respuesta de la Memoria y guardar en el registro
             if (tamanio == 1) {
               uint8_t valor;
-              recv(fd_memory, &valor, sizeof(uint8_t), MSG_WAITALL);
-              asignar_valor_registro(reg, valor);
-              log_info(logger_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
+              if (cpu_leer_memoria_segmentado(dir_fisica, 1, &valor)) {
+                asignar_valor_registro(reg, valor);
+                log_info(logger_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
+              } else {
+                log_error(logger_cpu, "Error al leer direccion fisica %d", dir_fisica);
+              }
             } else {
               uint32_t valor;
-              recv(fd_memory, &valor, sizeof(uint32_t), MSG_WAITALL);
-              asignar_valor_registro(reg, valor);
-              log_info(logger_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
+              if (cpu_leer_memoria_segmentado(dir_fisica, 4, &valor)) {
+                asignar_valor_registro(reg, valor);
+                log_info(logger_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
+              } else {
+                log_error(logger_cpu, "Error al leer direccion fisica %d", dir_fisica);
+              }
             }
             registros.PC++;
           }
@@ -190,25 +187,20 @@ int main(int argc, char *argv[]) {
             desaloja = true;
           } else {
             log_info(logger_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Dirección Lógica: %u", pcb->pid, dir_fisica, dir_logica);
-            // Enviar paquete ESCRIBIR_MEMORIA a Kernel Memory
-            t_paquete *paquete_km = crear_paquete();
-            paquete_km->cop = ESCRIBIR_MEMORIA;
-            agregar_a_paquete(paquete_km, &(pcb->pid), sizeof(int));
-            agregar_a_paquete(paquete_km, &dir_fisica, sizeof(int));
-            agregar_a_paquete(paquete_km, &tamanio, sizeof(int));
             if (tamanio == 1) {
               uint8_t val8 = (uint8_t)valor;
-              agregar_a_paquete(paquete_km, &val8, sizeof(uint8_t));
+              if (cpu_escribir_memoria_segmentado(dir_fisica, 1, &val8)) {
+                log_info(logger_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, val8);
+              } else {
+                log_error(logger_cpu, "Error al escribir en direccion fisica %d", dir_fisica);
+              }
             } else {
-              agregar_a_paquete(paquete_km, &valor, sizeof(uint32_t));
+              if (cpu_escribir_memoria_segmentado(dir_fisica, 4, &valor)) {
+                log_info(logger_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
+              } else {
+                log_error(logger_cpu, "Error al escribir en direccion fisica %d", dir_fisica);
+              }
             }
-            enviar_paquete(paquete_km, fd_memory);
-            eliminar_paquete(paquete_km);
-            
-            // Esperar el mensaje de OK
-            int ok;
-            recv(fd_memory, &ok, sizeof(int), MSG_WAITALL);
-            log_info(logger_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %u", pcb->pid, dir_fisica, valor);
             registros.PC++;
           }
         } else if (strcmp(op, "SUM") == 0) {
@@ -225,6 +217,34 @@ int main(int argc, char *argv[]) {
           uint32_t val_orig = obtener_valor_registro(reg_orig);
           asignar_valor_registro(reg_dest, val_dest - val_orig);
           registros.PC++;
+        } else if (strcmp(op, "COPY_MEM") == 0) {
+          char *reg_size = tokens[1];
+          int size_to_copy = (int)obtener_valor_registro(reg_size);
+          
+          int dir_fisica_src = mmu_traducir_direccion(registros.SI, size_to_copy, pcb->cantidad_segmentos, pcb->tabla_segmentos);
+          int dir_fisica_dst = mmu_traducir_direccion(registros.DI, size_to_copy, pcb->cantidad_segmentos, pcb->tabla_segmentos);
+          
+          if (dir_fisica_src == -1 || dir_fisica_dst == -1) {
+            log_error(logger_cpu, "Segmentation Fault al traducir SI (%u) o DI (%u) para COPY_MEM (size: %d)", registros.SI, registros.DI, size_to_copy);
+            registros.PC++;
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            enviar_pcb(pcb, fd_dispatch, SEGMENTATION_FAULT);
+            desaloja = true;
+          } else {
+            void *buffer = malloc(size_to_copy);
+            if (cpu_leer_memoria_segmentado(dir_fisica_src, size_to_copy, buffer)) {
+              if (cpu_escribir_memoria_segmentado(dir_fisica_dst, size_to_copy, buffer)) {
+                log_info(logger_cpu, "COPY_MEM ejecutada con éxito (de DF %d a DF %d, %d bytes)", dir_fisica_src, dir_fisica_dst, size_to_copy);
+              } else {
+                log_error(logger_cpu, "Error al escribir en DF %d para COPY_MEM", dir_fisica_dst);
+              }
+            } else {
+              log_error(logger_cpu, "Error al leer de DF %d para COPY_MEM", dir_fisica_src);
+            }
+            free(buffer);
+            registros.PC++;
+          }
         } else if (strcmp(op, "JNZ") == 0) {
           char *reg = tokens[1];
           int pc_target = atoi(tokens[2]);
@@ -288,6 +308,24 @@ int main(int argc, char *argv[]) {
           enviar_pcb(pcb, fd_dispatch, SIGNAL_RECURSO);
           enviar_string(nombre_recurso, fd_dispatch, SIGNAL_RECURSO);
           desaloja = true;
+        } else if (strcmp(op, "MEM_ALLOC") == 0) {
+          int id_segmento = atoi(tokens[1]);
+          int tamanio = atoi(tokens[2]);
+          registros.PC++;
+          pcb->program_counter = registros.PC;
+          registros_por_pid[pcb->pid] = registros;
+          enviar_pcb(pcb, fd_dispatch, MEM_ALLOC);
+          enviar_entero(fd_dispatch, id_segmento);
+          enviar_entero(fd_dispatch, tamanio);
+          desaloja = true;
+        } else if (strcmp(op, "MEM_FREE") == 0) {
+          int id_segmento = atoi(tokens[1]);
+          registros.PC++;
+          pcb->program_counter = registros.PC;
+          registros_por_pid[pcb->pid] = registros;
+          enviar_pcb(pcb, fd_dispatch, MEM_FREE);
+          enviar_entero(fd_dispatch, id_segmento);
+          desaloja = true;
         } else if (strcmp(op, "INIT_PROC") == 0) {
           char *path_proceso = tokens[1];
           int prioridad = atoi(tokens[2]);
@@ -316,11 +354,16 @@ int main(int argc, char *argv[]) {
 
         // 3. Check Interrupt
         if (interrupted_pid == pcb->pid) {
-          log_info(logger_cpu, "## Interrupción recibida");
+          log_info(logger_cpu, "## Interrupción recibida (op: %d)", interrupt_op);
           pcb->program_counter = registros.PC;
           registros_por_pid[pcb->pid] = registros;
-          enviar_pcb(pcb, fd_dispatch, FIN_QUANTUM);
+          if (interrupt_op == INTERRUPCION_DESALOJO) {
+            enviar_pcb(pcb, fd_dispatch, INTERRUPCION_DESALOJO);
+          } else {
+            enviar_pcb(pcb, fd_dispatch, FIN_QUANTUM);
+          }
           interrupted_pid = 0;
+          interrupt_op = 0;
           break;
         }
       }

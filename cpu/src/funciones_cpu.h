@@ -1,6 +1,7 @@
 #ifndef CPU_UTILS_H_
 #define CPU_UTILS_H_
 
+#include <commons/collections/list.h>
 #include <commons/config.h>
 #include <commons/log.h>
 #include <errno.h>
@@ -10,6 +11,14 @@
 #include <stdlib.h>
 #include <utils/utils.h>
 #include "cpu_utils.h"
+
+typedef struct {
+    int socket;
+    int base;
+    int limite;
+    char *ip;
+    int puerto;
+} t_cpu_stick_conn;
 
 // Defino estructura del .config
 typedef struct {
@@ -47,10 +56,14 @@ extern t_registros registros;
 
 extern int kernel_interrupt_fd;
 extern uint32_t interrupted_pid;
+extern int interrupt_op;
 extern int fd_memory;
 extern int fd_scheduler;
 extern int fd_interrupt;
 extern int fd_dispatch;
+
+extern t_list *cpu_sticks;
+extern pthread_mutex_t mutex_cpu_sticks;
 
 // --- PROTOTIPOS ---
 void inicializar_cpu(char *config_path, char *id_cpu);
@@ -59,6 +72,11 @@ int conectar_a_modulo(char *nombre, char *ip, char *puerto, t_log *logger);
 bool cargar_configuracion(t_config_cpu *config_cpu, t_config *config_raw,
                           t_log *logger);
 bool inicializar_registros(t_registros *registros, t_log *logger);
-int recibir_operacion_cpu(int socket_cliente, t_log *logger); // <-- Renombrada para evitar conflicto
+int recibir_operacion_cpu(int socket_cliente, t_log *logger); 
+
+void actualizar_sticks_desde_memoria();
+int obtener_conexion_stick(int dir_fisica);
+bool cpu_leer_memoria_segmentado(uint32_t dir_fisica, int tamanio, void *dest_buffer);
+bool cpu_escribir_memoria_segmentado(uint32_t dir_fisica, int tamanio, void *src_buffer);
 
 #endif

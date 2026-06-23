@@ -8,6 +8,7 @@
 // --- Definición de variables globales --- //
 t_log *logger_server;
 int generador_pid = 1;
+bool compactacion_activa = false;
 
 t_queue *cola_new;
 t_queue *cola_ready;
@@ -28,6 +29,13 @@ pthread_mutex_t mutex_interfaces_io;
 t_list *nombres_recursos_global;
 t_dictionary *prioridades_procesos;
 pthread_mutex_t mutex_prioridades;
+
+char **queues_algorithms = NULL;
+bool queue_preemption = false;
+t_queue **colas_multinivel = NULL;
+int cant_colas_multinivel = 0;
+int pid_ejecutando_cmn = -1; // track executing pid in CMN
+int prioridad_ejecutando_cmn = -1; // track priority of executing process in CMN
 
 // ================ FUNCIONES ================ //
 void crear_proceso() {
@@ -59,15 +67,90 @@ void *planificador_largo_plazo(void *arg){
         t_pcb *pcb = queue_pop(cola_new);
         pthread_mutex_unlock(&mutex_new);
 
-        pcb->estado = ESTADO_READY;
+        encolar_proceso_ready(pcb);
+    }
+    return NULL;
+}
 
-        pthread_mutex_lock(&mutex_ready);
-        queue_push(cola_ready, pcb);
-        pthread_mutex_unlock(&mutex_ready);
+void encolar_proceso_ready(t_pcb *pcb) {
+    char *prev_estado_str;
+    if (pcb->estado == ESTADO_NEW) prev_estado_str = "NEW";
+    else if (pcb->estado == ESTADO_BLOCK) prev_estado_str = "BLOCK";
+    else if (pcb->estado == ESTADO_EXEC) prev_estado_str = "EXEC";
+    else prev_estado_str = "READY";
+    
+    pcb->estado = ESTADO_READY;
+    log_info(logger_server, "## (%d) Pasa del estado %s al estado READY", pcb->pid, prev_estado_str);
 
-        log_info(logger_server, "## PID: %d - Estado Anterior: NEW - Estado Actual: READY", pcb->pid);
+    pthread_mutex_lock(&mutex_ready);
+    if (strcmp(algoritmo_de_planificacion, "CMN") == 0) {
+        int prio = pcb->prioridad_actual;
+        if (prio < 0) prio = 0;
+        if (prio >= cant_colas_multinivel) prio = cant_colas_multinivel - 1;
         
-        sem_post(&sem_procesos_en_ready); // notifica que hay alguien en READY
+        queue_push(colas_multinivel[prio], pcb);
+        
+        // Check preemption
+        if (queue_preemption && pid_ejecutando_cmn != -1 && prio < prioridad_ejecutando_cmn) {
+            if (socket_cpu_interrupt != -1) {
+                int cop_int = INTERRUPCION_DESALOJO;
+                send(socket_cpu_interrupt, &cop_int, sizeof(int), 0);
+                enviar_entero(socket_cpu_interrupt, pid_ejecutando_cmn);
+                
+                log_info(logger_server, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d",
+                         pid_ejecutando_cmn, prioridad_ejecutando_cmn, pcb->pid, pcb->prioridad_actual);
+            }
+        }
+    } else {
+        queue_push(cola_ready, pcb);
+    }
+    pthread_mutex_unlock(&mutex_ready);
+    
+    sem_post(&sem_procesos_en_ready);
+}
+
+void *planificador_corto_plazo_cmn(void *arg) {
+    while (1) {
+        while (socket_cpu_dispatch == -1) {
+            usleep(100 * 1000);
+        }
+        sem_wait(&sem_cpu_libre);
+        sem_wait(&sem_procesos_en_ready);
+        
+        pthread_mutex_lock(&mutex_ready);
+        t_pcb *pcb_a_ejecutar = NULL;
+        int cola_elegida = -1;
+        
+        for (int i = 0; i < cant_colas_multinivel; i++) {
+            if (queue_size(colas_multinivel[i]) > 0) {
+                pcb_a_ejecutar = queue_pop(colas_multinivel[i]);
+                cola_elegida = i;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&mutex_ready);
+        
+        if (pcb_a_ejecutar == NULL) {
+            sem_post(&sem_cpu_libre);
+            continue;
+        }
+        
+        pcb_a_ejecutar->estado = ESTADO_EXEC;
+        pid_ejecutando_cmn = pcb_a_ejecutar->pid;
+        prioridad_ejecutando_cmn = pcb_a_ejecutar->prioridad_actual;
+        
+        log_info(logger_server, "## (%d) Pasa a estado EXEC (round robin/fifo cmn)", pcb_a_ejecutar->pid);
+        
+        if (strcmp(queues_algorithms[cola_elegida], "RR") == 0) {
+            pthread_t hilo_timer;
+            int *pid_ptr = malloc(sizeof(int));
+            *pid_ptr = pcb_a_ejecutar->pid;
+            pthread_create(&hilo_timer, NULL, temporizador_quantum, pid_ptr);
+            pthread_detach(hilo_timer);
+        }
+        
+        log_info(logger_server, "Despachando proceso PID: %d a la CPU...", pcb_a_ejecutar->pid);
+        enviar_pcb(pcb_a_ejecutar, socket_cpu_dispatch, DISPATCH_PCB);
     }
     return NULL;
 }
@@ -116,17 +199,7 @@ void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall){
 }
 
 void desbloquear_proceso_de_io(t_pcb *pcb){
-    // logs obligatorios
-    log_info(logger_server, "## (%d) finalizó IO y pasa a READY / SUSPENDED READY", pcb->pid);
-    log_info(logger_server, "## (%d) Pasa del estado BLOCKED al estado READY", pcb->pid);
-
-    pcb->estado = ESTADO_READY;
-
-    pthread_mutex_lock(&mutex_ready);
-    queue_push(cola_ready, pcb);
-    pthread_mutex_unlock(&mutex_ready);
-
-    sem_post(&sem_procesos_en_ready); //notifica al PCP que hay un proceso disponible
+    encolar_proceso_ready(pcb);
 }
 
 void finalizar_proceso(t_pcb *pcb, char *motivo){
@@ -260,6 +333,7 @@ void solicitar_recurso_wait(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
         log_info(logger_server, "## (PID: %d) Bloqueado por espera de recurso %s", pcb->pid, nombre_recurso);
         pcb->estado = ESTADO_BLOCK;
         queue_push(recurso->cola_bloqueados, pcb);
+        pid_ejecutando_cmn = -1;
 
         if (recurso->pid_dueno != -1) {
             aplicar_herencia_prioridad(pcb->pid, recurso->pid_dueno, recurso);
@@ -269,11 +343,7 @@ void solicitar_recurso_wait(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
         recurso->pid_dueno = pcb->pid;
         log_info(logger_server, "## (%d) Toma el Mutex %s", pcb->pid, nombre_recurso);
 
-        pcb->estado = ESTADO_READY;
-        pthread_mutex_lock(&mutex_ready);
-        queue_push(cola_ready, pcb);
-        pthread_mutex_unlock(&mutex_ready);
-        sem_post(&sem_procesos_en_ready);
+        encolar_proceso_ready(pcb);
     }
     pthread_mutex_unlock(&(recurso->mutex_recurso));
 
@@ -285,11 +355,7 @@ void liberar_recurso_signal(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
 
     if(recurso == NULL){
         log_error(logger_server, "El recurso %s no existe", nombre_recurso);
-        pcb->estado = ESTADO_READY;
-        pthread_mutex_lock(&mutex_ready);
-        queue_push(cola_ready, pcb);
-        pthread_mutex_unlock(&mutex_ready);
-        sem_post(&sem_procesos_en_ready);
+        encolar_proceso_ready(pcb);
         sem_post(&sem_cpu_libre);
         return;
     }
@@ -308,11 +374,7 @@ void liberar_recurso_signal(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
         recurso->pid_dueno = pcb_desbloqueado->pid;
         log_info(logger_server, "## (%d) Toma el Mutex %s", pcb_desbloqueado->pid, nombre_recurso);
 
-        pcb_desbloqueado->estado = ESTADO_READY;
-        pthread_mutex_lock(&mutex_ready);
-        queue_push(cola_ready, pcb_desbloqueado);
-        pthread_mutex_unlock(&mutex_ready);
-        sem_post(&sem_procesos_en_ready);
+        encolar_proceso_ready(pcb_desbloqueado);
     } else {
         recurso->pid_dueno = -1;
     }
@@ -321,11 +383,7 @@ void liberar_recurso_signal(t_pcb *pcb, char *nombre_recurso, int cliente_fd){
 
     pthread_mutex_unlock(&(recurso->mutex_recurso));
 
-    pcb->estado = ESTADO_READY;
-    pthread_mutex_lock(&mutex_ready);
-    queue_push(cola_ready, pcb);
-    pthread_mutex_unlock(&mutex_ready);
-    sem_post(&sem_procesos_en_ready);
+    encolar_proceso_ready(pcb);
 
     sem_post(&sem_cpu_libre);
 }

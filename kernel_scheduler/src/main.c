@@ -87,6 +87,36 @@ int main(int argc, char *argv[]) {
   if (algoritmo_de_planificacion == NULL) {
     algoritmo_de_planificacion = "FIFO";
   }
+
+  if (strcmp(algoritmo_de_planificacion, "CMN") == 0) {
+    if (config_has_property(config_server, "QUEUES_ALGORITHMS")) {
+      queues_algorithms = config_get_array_value(config_server, "QUEUES_ALGORITHMS");
+      int cant = 0;
+      while (queues_algorithms[cant] != NULL) {
+        cant++;
+      }
+      cant_colas_multinivel = cant;
+    } else {
+      log_error(logger_server, "Falta la propiedad QUEUES_ALGORITHMS en config para CMN");
+      return 1;
+    }
+    
+    if (config_has_property(config_server, "QUEUE_PREEMPTION")) {
+      char *preempt_str = config_get_string_value(config_server, "QUEUE_PREEMPTION");
+      if (preempt_str != NULL && (strcmp(preempt_str, "TRUE") == 0 || strcmp(preempt_str, "true") == 0)) {
+        queue_preemption = true;
+      } else {
+        queue_preemption = false;
+      }
+    } else {
+      queue_preemption = false;
+    }
+
+    colas_multinivel = malloc(sizeof(t_queue*) * cant_colas_multinivel);
+    for (int i = 0; i < cant_colas_multinivel; i++) {
+      colas_multinivel[i] = queue_create();
+    }
+  }
   
   if (config_has_property(config_server, "RR_QUANTUM")) {
     quantum = config_get_int_value(config_server, "RR_QUANTUM");
@@ -137,6 +167,8 @@ int main(int argc, char *argv[]) {
     pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_fifo, NULL);
   } else if (strcmp(algoritmo_de_planificacion, "RR") == 0){ 
     pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_rr, NULL);
+  } else if (strcmp(algoritmo_de_planificacion, "CMN") == 0){
+    pthread_create(&hilo_pcp, NULL, planificador_corto_plazo_cmn, NULL);
   } else {
     log_error(logger_server, "Algoritmo de planificación desconocido: %s", algoritmo_de_planificacion);
     return 1;
@@ -290,11 +322,7 @@ void *atender_cliente(void *arg){
         t_pcb *pcb_a_desbloquear = sacar_de_cola_block(active_stdin_pid);
         if(pcb_a_desbloquear != NULL){
           log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
-          pcb_a_desbloquear->estado = ESTADO_READY;
-          pthread_mutex_lock(&mutex_ready);
-          queue_push(cola_ready, pcb_a_desbloquear);
-          pthread_mutex_unlock(&mutex_ready);
-          sem_post(&sem_procesos_en_ready);
+          encolar_proceso_ready(pcb_a_desbloquear);
         }
         active_stdin_pid = -1;
       } else {
@@ -381,11 +409,7 @@ void *atender_cliente(void *arg){
 
       if(pcb_a_desbloquear != NULL){
         log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
-        pcb_a_desbloquear->estado = ESTADO_READY;
-        pthread_mutex_lock(&mutex_ready);
-        queue_push(cola_ready, pcb_a_desbloquear);
-        pthread_mutex_unlock(&mutex_ready);
-        sem_post(&sem_procesos_en_ready);
+        encolar_proceso_ready(pcb_a_desbloquear);
       } else {
         log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK", pid_terminado);
       }
@@ -410,6 +434,134 @@ void *atender_cliente(void *arg){
       free(nombre_recurso);
       break; 
     }
+    case MEM_ALLOC: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
+      int id_segmento = recibir_entero(cliente_fd);
+      int tamanio = recibir_entero(cliente_fd);
+      
+      log_info(logger_server, "## (%d) - Solicitó syscall: MEM_ALLOC - ID: %d, Tamaño: %d", pcb->pid, id_segmento, tamanio);
+      
+      // Enviar solicitud a Kernel Memory
+      int cop = MEM_ALLOC;
+      send(socket_kernel_memory, &cop, sizeof(int), 0);
+      enviar_entero(socket_kernel_memory, pcb->pid);
+      enviar_entero(socket_kernel_memory, id_segmento);
+      enviar_entero(socket_kernel_memory, tamanio);
+      
+      // Recibir respuesta de Kernel Memory
+      int response_km;
+      recv(socket_kernel_memory, &response_km, sizeof(int), MSG_WAITALL);
+      
+      if (response_km == INICIAR_COMPACTACION) {
+        log_info(logger_server, "## Inicio de compactación");
+        compactacion_activa = true;
+        
+        // Desalojar CPUs. Como por ahora tenemos una sola CPU conectada en dispatch/interrupt,
+        // le enviamos interrupción de desalojo al socket de interrupción.
+        if (socket_cpu_interrupt != -1) {
+            int cop_int = INTERRUPCION_DESALOJO;
+            send(socket_cpu_interrupt, &cop_int, sizeof(int), 0);
+            enviar_entero(socket_cpu_interrupt, pcb->pid); // El PID de la CPU actualmente corriendo
+            
+            // Esperar que la CPU devuelva el PCB desalojado
+            // Al hacer esto de forma síncrona en este hilo, podemos pausar el flujo de la syscall
+            // y procesar el desalojo cuando la CPU responda en el hilo correspondiente
+        }
+        
+        // Confirmar desalojo a Kernel Memory
+        int cop_conf = CONFIRMAR_DESALOJO;
+        send(socket_kernel_memory, &cop_conf, sizeof(int), 0);
+        
+        // Esperar fin de compactación
+        int status_comp;
+        recv(socket_kernel_memory, &status_comp, sizeof(int), MSG_WAITALL);
+        
+        log_info(logger_server, "## Fin de compactación");
+        compactacion_activa = false;
+        response_km = status_comp;
+      }
+      
+      if (response_km == 1) {
+        // Actualizar la tabla de segmentos en el PCB
+        int cant_seg;
+        recv(socket_kernel_memory, &cant_seg, sizeof(int), MSG_WAITALL);
+        pcb->cantidad_segmentos = cant_seg;
+        free(pcb->tabla_segmentos);
+        if (cant_seg > 0) {
+            pcb->tabla_segmentos = malloc(sizeof(t_segmento) * cant_seg);
+            for (int i = 0; i < cant_seg; i++) {
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].id), sizeof(int), MSG_WAITALL);
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].base), sizeof(int), MSG_WAITALL);
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].limite), sizeof(int), MSG_WAITALL);
+            }
+        } else {
+            pcb->tabla_segmentos = NULL;
+        }
+        
+        // Syscalls de memoria vuelven a enviar el PCB al CPU
+        encolar_proceso_ready(pcb);
+      } else {
+        log_error(logger_server, "Out of memory o error al crear segmento %d para PID %d", id_segmento, pcb->pid);
+        finalizar_proceso(pcb, "OUT_OF_MEMORY");
+      }
+      sem_post(&sem_cpu_libre);
+      break;
+    }
+    
+    case MEM_FREE: {
+      t_pcb *pcb = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb);
+      int id_segmento = recibir_entero(cliente_fd);
+      
+      log_info(logger_server, "## (%d) - Solicitó syscall: MEM_FREE - ID: %d", pcb->pid, id_segmento);
+      
+      // Enviar solicitud a Kernel Memory
+      int cop = MEM_FREE;
+      send(socket_kernel_memory, &cop, sizeof(int), 0);
+      enviar_entero(socket_kernel_memory, pcb->pid);
+      enviar_entero(socket_kernel_memory, id_segmento);
+      
+      int response_km;
+      recv(socket_kernel_memory, &response_km, sizeof(int), MSG_WAITALL);
+      
+      if (response_km == 1) {
+        int cant_seg;
+        recv(socket_kernel_memory, &cant_seg, sizeof(int), MSG_WAITALL);
+        pcb->cantidad_segmentos = cant_seg;
+        free(pcb->tabla_segmentos);
+        if (cant_seg > 0) {
+            pcb->tabla_segmentos = malloc(sizeof(t_segmento) * cant_seg);
+            for (int i = 0; i < cant_seg; i++) {
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].id), sizeof(int), MSG_WAITALL);
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].base), sizeof(int), MSG_WAITALL);
+                recv(socket_kernel_memory, &(pcb->tabla_segmentos[i].limite), sizeof(int), MSG_WAITALL);
+            }
+        } else {
+            pcb->tabla_segmentos = NULL;
+        }
+        
+        encolar_proceso_ready(pcb);
+      } else {
+        log_error(logger_server, "Error al liberar segmento %d para PID %d", id_segmento, pcb->pid);
+        finalizar_proceso(pcb, "SEG_FAULT");
+      }
+      sem_post(&sem_cpu_libre);
+      break;
+    }
+
+    case INTERRUPCION_DESALOJO: {
+      t_pcb *pcb_desalojado = recibir_pcb(cliente_fd);
+      actualizar_prioridades_pcb(pcb_desalojado);
+      
+      if (!compactacion_activa) {
+        log_info(logger_server, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria", pcb_desalojado->pid, pcb_desalojado->prioridad_actual);
+      }
+      encolar_proceso_ready(pcb_desalojado);
+      sem_post(&sem_cpu_libre);
+      break;
+    }
+    
     case INIT_PROC: {
       t_pcb *pcb_creador = recibir_pcb(cliente_fd);
       actualizar_prioridades_pcb(pcb_creador);
@@ -448,12 +600,7 @@ void *atender_cliente(void *arg){
       log_info(logger_server, "## (%d) Se crea el proceso - Estado: NEW", nuevo_pcb->pid);
       sem_post(&sem_procesos_en_new);
 
-      pcb_creador->estado = ESTADO_READY;
-      pthread_mutex_lock(&mutex_ready);
-      queue_push(cola_ready, pcb_creador);
-      pthread_mutex_unlock(&mutex_ready);
-      sem_post(&sem_procesos_en_ready);
-
+      encolar_proceso_ready(pcb_creador);
       sem_post(&sem_cpu_libre);
 
       free(path_proceso);
@@ -465,13 +612,7 @@ void *atender_cliente(void *arg){
       actualizar_prioridades_pcb(pcb_desalojado);
       log_info(logger_server, "## (%d) - Desalojado por fin de quantum", pcb_desalojado->pid);
 
-      pcb_desalojado->estado = ESTADO_READY;
-
-      pthread_mutex_lock(&mutex_ready);
-      queue_push(cola_ready, pcb_desalojado);
-      pthread_mutex_unlock(&mutex_ready);
-
-      sem_post(&sem_procesos_en_ready);
+      encolar_proceso_ready(pcb_desalojado);
       sem_post(&sem_cpu_libre);
       break;
     }
