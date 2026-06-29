@@ -23,6 +23,8 @@ typedef struct {
     int id;
     int base;
     int limite;
+    int swap_bloque_inicio;
+    int swap_cant_bloques;
 } t_segmento_mem;
 
 typedef struct {
@@ -49,6 +51,13 @@ t_dictionary *tablas_segmentos_procesos = NULL; // PID string -> t_tabla_segment
 t_list *huecos_libres = NULL; // list of t_free_block*
 pthread_mutex_t mutex_memoria;
 
+int socket_swap = -1;
+int swap_size = 0;
+int swap_block_size = 0;
+int swap_cant_bloques = 0;
+bool *swap_bloques_libres = NULL;
+pthread_mutex_t mutex_swap;
+
 // Firmas de funciones
 void *atender_cliente(void *arg);
 void procesar_iniciar_proceso(int cliente_fd);
@@ -60,6 +69,14 @@ void procesar_mem_free(int client_fd);
 bool stick_leer_datos(uint32_t dir_fisica, int tamanio, void *dest_buffer);
 bool stick_escribir_datos(uint32_t dir_fisica, int tamanio, void *src_buffer);
 void procesar_compactacion();
+
+bool safe_send(int socket, void *buf, size_t len);
+bool safe_recv(int socket, void *buf, size_t len);
+int swap_alloc_bloques(int cant);
+void swap_free_bloques(int inicio, int cant);
+void procesar_suspender_proceso(int client_fd);
+void procesar_des_suspender_proceso(int client_fd);
+void procesar_identificacion_swap(int client_fd);
 
 int main(int argc, char *argv[]) {
     saludar("kernel_memory");
@@ -92,6 +109,7 @@ int main(int argc, char *argv[]) {
     tablas_segmentos_procesos = dictionary_create();
     huecos_libres = list_create();
     pthread_mutex_init(&mutex_memoria, NULL);
+    pthread_mutex_init(&mutex_swap, NULL);
 
     int server_fd = iniciar_servidor(ip, puerto);
     log_info(logger, "Kernel Memory iniciado en %s:%s. Esperando conexiones...", ip, puerto);
@@ -163,6 +181,10 @@ void *atender_cliente(void *arg) {
         } // <- Agregada llave faltante del if
 
         switch (cod_op) {
+            case IDENTIFICACION_SWAP:
+                procesar_identificacion_swap(cliente_fd);
+                break;
+
             case IDENTIFICACION_STICK:
                 procesar_identificacion_stick(cliente_fd);
                 break;
@@ -516,6 +538,8 @@ void procesar_mem_alloc(int client_fd) {
         nuevo_seg->id = id_segmento;
         nuevo_seg->base = selected_block->base;
         nuevo_seg->limite = tamanio;
+        nuevo_seg->swap_bloque_inicio = -1;
+        nuevo_seg->swap_cant_bloques = 0;
         list_add(tabla->segmentos, nuevo_seg);
         
         if (selected_block->size == tamanio) {
@@ -566,6 +590,8 @@ void procesar_mem_alloc(int client_fd) {
                 nuevo_seg->id = id_segmento;
                 nuevo_seg->base = selected_block->base;
                 nuevo_seg->limite = tamanio;
+                nuevo_seg->swap_bloque_inicio = -1;
+                nuevo_seg->swap_cant_bloques = 0;
                 list_add(tabla->segmentos, nuevo_seg);
                 
                 if (selected_block->size == tamanio) {
@@ -691,12 +717,13 @@ bool stick_leer_datos(uint32_t dir_fisica, int tamanio, void *dest_buffer) {
         int chunk_size = (rest < limit_in_stick) ? rest : limit_in_stick;
         
         int op = LECTURA_MEMORIA;
-        send(matching_stick->socket, &op, sizeof(int), 0);
-        send(matching_stick->socket, &curr_dir, sizeof(uint32_t), 0);
-        send(matching_stick->socket, &chunk_size, sizeof(uint32_t), 0);
+        if (!safe_send(matching_stick->socket, &op, sizeof(int)) ||
+            !safe_send(matching_stick->socket, &curr_dir, sizeof(uint32_t)) ||
+            !safe_send(matching_stick->socket, &chunk_size, sizeof(uint32_t))) {
+            return false;
+        }
         
-        int r = recv(matching_stick->socket, dest_buffer + bytes_leidos, chunk_size, MSG_WAITALL);
-        if (r != chunk_size) {
+        if (!safe_recv(matching_stick->socket, dest_buffer + bytes_leidos, chunk_size)) {
             return false;
         }
         bytes_leidos += chunk_size;
@@ -729,14 +756,15 @@ bool stick_escribir_datos(uint32_t dir_fisica, int tamanio, void *src_buffer) {
         int chunk_size = (rest < limit_in_stick) ? rest : limit_in_stick;
         
         int op = ESCRITURA_MEMORIA;
-        send(matching_stick->socket, &op, sizeof(int), 0);
-        send(matching_stick->socket, &curr_dir, sizeof(uint32_t), 0);
-        send(matching_stick->socket, &chunk_size, sizeof(uint32_t), 0);
-        send(matching_stick->socket, src_buffer + bytes_escritos, chunk_size, 0);
+        if (!safe_send(matching_stick->socket, &op, sizeof(int)) ||
+            !safe_send(matching_stick->socket, &curr_dir, sizeof(uint32_t)) ||
+            !safe_send(matching_stick->socket, &chunk_size, sizeof(uint32_t)) ||
+            !safe_send(matching_stick->socket, src_buffer + bytes_escritos, chunk_size)) {
+            return false;
+        }
         
         int resultado;
-        int r = recv(matching_stick->socket, &resultado, sizeof(int), MSG_WAITALL);
-        if (r != sizeof(int) || resultado != 1) {
+        if (!safe_recv(matching_stick->socket, &resultado, sizeof(int)) || resultado != 1) {
             return false;
         }
         bytes_escritos += chunk_size;
@@ -822,6 +850,36 @@ void procesar_compactacion() {
     log_info(logger, "## Fin de compactación");
 }
 
+void procesar_identificacion_swap(int cliente_fd) {
+    int size_total;
+    void *stream = recibir_buffer(&size_total, cliente_fd);
+    
+    int desplazamiento = 0;
+    int size_val;
+    memcpy(&size_val, stream + desplazamiento, sizeof(int));
+    desplazamiento += sizeof(int);
+    
+    int block_size_val;
+    memcpy(&block_size_val, stream + desplazamiento, sizeof(int));
+    
+    free(stream);
+    
+    pthread_mutex_lock(&mutex_swap);
+    socket_swap = cliente_fd;
+    swap_size = size_val;
+    swap_block_size = block_size_val;
+    swap_cant_bloques = swap_size / swap_block_size;
+    
+    if (swap_bloques_libres != NULL) {
+        free(swap_bloques_libres);
+    }
+    swap_bloques_libres = malloc(sizeof(bool) * swap_cant_bloques);
+    memset(swap_bloques_libres, true, sizeof(bool) * swap_cant_bloques);
+    pthread_mutex_unlock(&mutex_swap);
+    
+    log_info(logger, "## SWAP Registrado: %d bytes, %d bloques de %d bytes", swap_size, swap_cant_bloques, swap_block_size);
+}
+
 void procesar_suspender_proceso(int client_fd) {
     int pid = recibir_entero(client_fd);
     char pid_str[32];
@@ -835,6 +893,46 @@ void procesar_suspender_proceso(int client_fd) {
             t_segmento_mem *seg = list_get(tabla->segmentos, i);
             
             if (seg->base != -1) {
+                int cant_bloques = (seg->limite + swap_block_size - 1) / swap_block_size;
+                int swap_block_start = swap_alloc_bloques(cant_bloques);
+                if (swap_block_start == -1) {
+                    log_error(logger, "Error: No hay espacio suficiente en SWAP para suspender el PID %d", pid);
+                    pthread_mutex_unlock(&mutex_memoria);
+                    int fail = 0;
+                    send(client_fd, &fail, sizeof(int), 0);
+                    return;
+                }
+                
+                void *seg_buffer = malloc(seg->limite);
+                if (!stick_leer_datos(seg->base, seg->limite, seg_buffer)) {
+                    free(seg_buffer);
+                    pthread_mutex_unlock(&mutex_memoria);
+                    return;
+                }
+                
+                for (int b = 0; b < cant_bloques; b++) {
+                    int block_num = swap_block_start + b;
+                    void *block_data = calloc(1, swap_block_size);
+                    int offset = b * swap_block_size;
+                    int bytes_to_copy = seg->limite - offset;
+                    if (bytes_to_copy > swap_block_size) {
+                        bytes_to_copy = swap_block_size;
+                    }
+                    memcpy(block_data, seg_buffer + offset, bytes_to_copy);
+                    
+                    t_paquete *paquete = crear_paquete();
+                    paquete->cop = ESCRITURA_SWAP;
+                    agregar_a_paquete(paquete, &block_num, sizeof(int));
+                    agregar_a_paquete(paquete, block_data, swap_block_size);
+                    enviar_paquete(paquete, socket_swap);
+                    eliminar_paquete(paquete);
+                    free(block_data);
+                    
+                    int ok_swap = 0;
+                    recv(socket_swap, &ok_swap, sizeof(int), MSG_WAITALL);
+                }
+                free(seg_buffer);
+                
                 t_free_block *nuevo_hueco = malloc(sizeof(t_free_block));
                 nuevo_hueco->base = seg->base;
                 nuevo_hueco->limite = seg->base + seg->limite - 1;
@@ -842,7 +940,10 @@ void procesar_suspender_proceso(int client_fd) {
                 list_add(huecos_libres, nuevo_hueco);
                 
                 log_info(logger, "## PID: %d - Segmento Liberado %d (por suspension)", pid, seg->id);
+                
                 seg->base = -1;
+                seg->swap_bloque_inicio = swap_block_start;
+                seg->swap_cant_bloques = cant_bloques;
             }
         }
         
@@ -950,6 +1051,31 @@ void procesar_des_suspender_proceso(int client_fd) {
         for (int s = 0; s < size_seg; s++) {
             t_segmento_mem *seg = list_get(tabla->segmentos, s);
             seg->base = temp_bases[s];
+            
+            if (seg->swap_bloque_inicio != -1) {
+                void *seg_buffer = malloc(seg->swap_cant_bloques * swap_block_size);
+                
+                for (int b = 0; b < seg->swap_cant_bloques; b++) {
+                    int block_num = seg->swap_bloque_inicio + b;
+                    
+                    t_paquete *paquete = crear_paquete();
+                    paquete->cop = LECTURA_SWAP;
+                    agregar_a_paquete(paquete, &block_num, sizeof(int));
+                    enviar_paquete(paquete, socket_swap);
+                    eliminar_paquete(paquete);
+                    
+                    int offset = b * swap_block_size;
+                    recv(socket_swap, seg_buffer + offset, swap_block_size, MSG_WAITALL);
+                }
+                
+                stick_escribir_datos(seg->base, seg->limite, seg_buffer);
+                free(seg_buffer);
+                
+                swap_free_bloques(seg->swap_bloque_inicio, seg->swap_cant_bloques);
+                seg->swap_bloque_inicio = -1;
+                seg->swap_cant_bloques = 0;
+            }
+            
             log_info(logger, "## PID: %d - Segmento Creado %d (por des-suspension) - Base: %d - Tamaño: %d", pid, seg->id, seg->base, seg->limite);
         }
         pthread_mutex_unlock(&mutex_memoria);
@@ -965,6 +1091,73 @@ void procesar_des_suspender_proceso(int client_fd) {
         send(client_fd, &fail, sizeof(int), 0);
     }
     free(temp_bases);
+}
+
+bool safe_send(int socket, void *buf, size_t len) {
+    int total_sent = 0;
+    while (total_sent < len) {
+        ssize_t r = send(socket, buf + total_sent, len - total_sent, 0);
+        if (r <= 0) {
+            log_error(logger, "Error de conexion con el Memory Stick al enviar datos.");
+            if (socket_scheduler != -1) {
+                int cop = STICK_DESCONECTADO;
+                send(socket_scheduler, &cop, sizeof(int), 0);
+            }
+            return false;
+        }
+        total_sent += r;
+    }
+    return true;
+}
+
+bool safe_recv(int socket, void *buf, size_t len) {
+    int total_recv = 0;
+    while (total_recv < len) {
+        ssize_t r = recv(socket, buf + total_recv, len - total_recv, MSG_WAITALL);
+        if (r <= 0) {
+            log_error(logger, "Error de conexion con el Memory Stick al recibir datos.");
+            if (socket_scheduler != -1) {
+                int cop = STICK_DESCONECTADO;
+                send(socket_scheduler, &cop, sizeof(int), 0);
+            }
+            return false;
+        }
+        total_recv += r;
+    }
+    return true;
+}
+
+int swap_alloc_bloques(int cant) {
+    pthread_mutex_lock(&mutex_swap);
+    for (int i = 0; i <= swap_cant_bloques - cant; i++) {
+        bool fit = true;
+        for (int j = 0; j < cant; j++) {
+            if (!swap_bloques_libres[i + j]) {
+                fit = false;
+                break;
+            }
+        }
+        if (fit) {
+            for (int j = 0; j < cant; j++) {
+                swap_bloques_libres[i + j] = false;
+            }
+            pthread_mutex_unlock(&mutex_swap);
+            return i;
+        }
+    }
+    pthread_mutex_unlock(&mutex_swap);
+    return -1;
+}
+
+void swap_free_bloques(int inicio, int cant) {
+    if (inicio == -1) return;
+    pthread_mutex_lock(&mutex_swap);
+    for (int i = 0; i < cant; i++) {
+        if (inicio + i < swap_cant_bloques) {
+            swap_bloques_libres[inicio + i] = true;
+        }
+    }
+    pthread_mutex_unlock(&mutex_swap);
 }
 
 /*
