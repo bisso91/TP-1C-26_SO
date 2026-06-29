@@ -45,10 +45,13 @@ int main(int argc, char *argv[]) {
   cola_ready = queue_create();
   cola_block = queue_create();
   cola_exit = queue_create();
+  cola_susp_block = queue_create();
+  cola_susp_ready = queue_create();
   interfaces_io = dictionary_create();
   io_pending_addresses = dictionary_create();
 
   prioridades_procesos = dictionary_create();
+  tiempos_suspension = dictionary_create();
   pthread_mutex_init(&mutex_prioridades, NULL);
   nombres_recursos_global = list_create();
 
@@ -56,6 +59,8 @@ int main(int argc, char *argv[]) {
   pthread_mutex_init(&mutex_ready, NULL);
   pthread_mutex_init(&mutex_block, NULL);
   pthread_mutex_init(&mutex_exit, NULL);
+  pthread_mutex_init(&mutex_susp_block, NULL);
+  pthread_mutex_init(&mutex_susp_ready, NULL);
   pthread_mutex_init(&mutex_interfaces_io, NULL);
   pthread_mutex_init(&mutex_io_pending, NULL);
 
@@ -126,6 +131,12 @@ int main(int argc, char *argv[]) {
     quantum = 1000;
   }
 
+  if (config_has_property(config_server, "SUSPENSION_TIMEOUT")) {
+    suspension_timeout = config_get_int_value(config_server, "SUSPENSION_TIMEOUT");
+  } else {
+    suspension_timeout = 3000;
+  }
+
   // Recursos de configuración (si existen)
   if (config_has_property(config_server, "RECURSOS") && config_has_property(config_server, "INSTANCIAS_RECURSOS")) {
     char** nombres_recursos = config_get_array_value(config_server, "RECURSOS");
@@ -161,6 +172,10 @@ int main(int argc, char *argv[]) {
   pthread_t hilo_plp;
   pthread_create(&hilo_plp, NULL, planificador_largo_plazo, NULL);
   pthread_detach(hilo_plp);
+
+  pthread_t hilo_des_susp;
+  pthread_create(&hilo_des_susp, NULL, hilo_des_suspension_periodico, NULL);
+  pthread_detach(hilo_des_susp);
 
   pthread_t hilo_pcp;
   if (strcmp(algoritmo_de_planificacion, "FIFO") == 0){
@@ -269,12 +284,9 @@ void *atender_cliente(void *arg){
       int milisegundos = recibir_entero(cliente_fd);
 
       log_info(logger_server, "## (%d) Solicitó syscall: SLEEP", pcb->pid);
-      log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+      log_info(logger_server, "## (%d) Pasa del estado EXEC al estado BLOCK", pcb->pid);
 
-      pcb->estado = ESTADO_BLOCK;
-      pthread_mutex_lock(&mutex_block);
-      queue_push(cola_block, pcb);
-      pthread_mutex_unlock(&mutex_block);
+      encolar_proceso_block(pcb);
 
       sem_post(&sem_cpu_libre);
 
@@ -320,9 +332,19 @@ void *atender_cliente(void *arg){
         }
 
         t_pcb *pcb_a_desbloquear = sacar_de_cola_block(active_stdin_pid);
-        if(pcb_a_desbloquear != NULL){
+        if (pcb_a_desbloquear != NULL) {
           log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
           encolar_proceso_ready(pcb_a_desbloquear);
+        } else {
+          pcb_a_desbloquear = sacar_de_cola_susp_block(active_stdin_pid);
+          if (pcb_a_desbloquear != NULL) {
+            log_info(logger_server, "## (%d) finalizó IO y pasa a SUSP_READY", pcb_a_desbloquear->pid);
+            cambiar_estado(pcb_a_desbloquear, ESTADO_SUS_READY);
+            pthread_mutex_lock(&mutex_susp_ready);
+            queue_push(cola_susp_ready, pcb_a_desbloquear);
+            pthread_mutex_unlock(&mutex_susp_ready);
+            intentar_des_suspender_procesos();
+          }
         }
         active_stdin_pid = -1;
       } else {
@@ -333,12 +355,9 @@ void *atender_cliente(void *arg){
         int size_to_read = recibir_entero(cliente_fd);
 
         log_info(logger_server, "## (%d) Solicitó syscall: STDIN", pcb->pid);
-        log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+        log_info(logger_server, "## (%d) Pasa del estado EXEC al estado BLOCK", pcb->pid);
 
-        pcb->estado = ESTADO_BLOCK;
-        pthread_mutex_lock(&mutex_block);
-        queue_push(cola_block, pcb);
-        pthread_mutex_unlock(&mutex_block);
+        encolar_proceso_block(pcb);
 
         sem_post(&sem_cpu_libre);
 
@@ -369,12 +388,9 @@ void *atender_cliente(void *arg){
       int size_to_read = recibir_entero(cliente_fd);
 
       log_info(logger_server, "## (%d) Solicitó syscall: STDOUT", pcb->pid);
-      log_info(logger_server, "## (%d) Pasa del estado EXECUTE al estado BLOCKED", pcb->pid);
+      log_info(logger_server, "## (%d) Pasa del estado EXEC al estado BLOCK", pcb->pid);
 
-      pcb->estado = ESTADO_BLOCK;
-      pthread_mutex_lock(&mutex_block);
-      queue_push(cola_block, pcb);
-      pthread_mutex_unlock(&mutex_block);
+      encolar_proceso_block(pcb);
 
       sem_post(&sem_cpu_libre);
 
@@ -411,7 +427,17 @@ void *atender_cliente(void *arg){
         log_info(logger_server, "## (%d) finalizó IO y pasa a READY", pcb_a_desbloquear->pid);
         encolar_proceso_ready(pcb_a_desbloquear);
       } else {
-        log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK", pid_terminado);
+        pcb_a_desbloquear = sacar_de_cola_susp_block(pid_terminado);
+        if (pcb_a_desbloquear != NULL) {
+          log_info(logger_server, "## (%d) finalizó IO y pasa a SUSP_READY", pcb_a_desbloquear->pid);
+          cambiar_estado(pcb_a_desbloquear, ESTADO_SUS_READY);
+          pthread_mutex_lock(&mutex_susp_ready);
+          queue_push(cola_susp_ready, pcb_a_desbloquear);
+          pthread_mutex_unlock(&mutex_susp_ready);
+          intentar_des_suspender_procesos();
+        } else {
+          log_error(logger_server, "Se intentó debloquear PID %d pero no estaba en BLOCK ni SUSP_BLOCK", pid_terminado);
+        }
       }
       break;
     }
@@ -637,7 +663,12 @@ void *atender_cliente(void *arg){
       socket_cpu_interrupt = cliente_fd;
       log_info(logger_server, "CPU Interrupt conectada con FD %d", socket_cpu_interrupt);
       break;
-    }                
+    }
+    case STICK_DESCONECTADO: {
+      log_error(logger_server, "ERROR CRITICO: Un Memory Stick se desconecto de la memoria principal!");
+      lanzar_bsod();
+      break;
+    }
     default:
         log_warning(logger_server, "Operación no identificada del FD %d.", cliente_fd);
         break;

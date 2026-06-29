@@ -125,6 +125,39 @@ void *atender_cliente(void *arg) {
         int cod_op = recibir_operacion(cliente_fd);
         if (cod_op == -1) {
             log_warning(logger, "El cliente con FD %d se desconectó.", cliente_fd);
+            
+            pthread_mutex_lock(&mutex_sticks);
+            int stick_index = -1;
+            int cant_sticks = list_size(lista_sticks);
+            t_memory_stick_reg *disconnected_stick = NULL;
+            for (int i = 0; i < cant_sticks; i++) {
+                t_memory_stick_reg *stick = list_get(lista_sticks, i);
+                if (stick->socket == cliente_fd) {
+                    disconnected_stick = stick;
+                    stick_index = i;
+                    break;
+                }
+            }
+            
+            if (disconnected_stick != NULL) {
+                log_error(logger, "## Memory Stick en puerto %d desconectado. Notificando al Scheduler...", disconnected_stick->puerto);
+                list_remove(lista_sticks, stick_index);
+                free(disconnected_stick->ip);
+                free(disconnected_stick);
+                pthread_mutex_unlock(&mutex_sticks);
+                
+                int socket_sched = crear_conexion("127.0.0.1", "8001");
+                if (socket_sched != -1) {
+                    int cop = STICK_DESCONECTADO;
+                    send(socket_sched, &cop, sizeof(int), 0);
+                    close(socket_sched);
+                } else {
+                    log_error(logger, "No se pudo conectar al Scheduler para notificar BSOD.");
+                }
+            } else {
+                pthread_mutex_unlock(&mutex_sticks);
+            }
+            
             liberar_conexion(cliente_fd);
             break;             
         } // <- Agregada llave faltante del if
@@ -144,6 +177,14 @@ void *atender_cliente(void *arg) {
 
             case MEM_FREE:
                 procesar_mem_free(cliente_fd);
+                break;
+
+            case SUSPENDER_PROCESO:
+                procesar_suspender_proceso(cliente_fd);
+                break;
+
+            case DES_SUSPENDER_PROCESO:
+                procesar_des_suspender_proceso(cliente_fd);
                 break;
 
             case INICIAR_PROCESO:
@@ -779,6 +820,151 @@ void procesar_compactacion() {
     pthread_mutex_unlock(&mutex_memoria);
     
     log_info(logger, "## Fin de compactación");
+}
+
+void procesar_suspender_proceso(int client_fd) {
+    int pid = recibir_entero(client_fd);
+    char pid_str[32];
+    sprintf(pid_str, "%d", pid);
+    
+    pthread_mutex_lock(&mutex_memoria);
+    t_tabla_segmentos *tabla = dictionary_get(tablas_segmentos_procesos, pid_str);
+    if (tabla != NULL) {
+        int size_seg = list_size(tabla->segmentos);
+        for (int i = 0; i < size_seg; i++) {
+            t_segmento_mem *seg = list_get(tabla->segmentos, i);
+            
+            if (seg->base != -1) {
+                t_free_block *nuevo_hueco = malloc(sizeof(t_free_block));
+                nuevo_hueco->base = seg->base;
+                nuevo_hueco->limite = seg->base + seg->limite - 1;
+                nuevo_hueco->size = seg->limite;
+                list_add(huecos_libres, nuevo_hueco);
+                
+                log_info(logger, "## PID: %d - Segmento Liberado %d (por suspension)", pid, seg->id);
+                seg->base = -1;
+            }
+        }
+        
+        bool comparador_huecos(void *a, void *b) {
+            return ((t_free_block*)a)->base < ((t_free_block*)b)->base;
+        }
+        list_sort(huecos_libres, comparador_huecos);
+        
+        int h = 0;
+        while (h < list_size(huecos_libres) - 1) {
+            t_free_block *h1 = list_get(huecos_libres, h);
+            t_free_block *h2 = list_get(huecos_libres, h + 1);
+            if (h1->limite + 1 == h2->base) {
+                h1->limite = h2->limite;
+                h1->size += h2->size;
+                list_remove_and_destroy_element(huecos_libres, h + 1, free);
+            } else {
+                h++;
+            }
+        }
+    }
+    pthread_mutex_unlock(&mutex_memoria);
+    
+    int ok = 1;
+    send(client_fd, &ok, sizeof(int), 0);
+}
+
+void procesar_des_suspender_proceso(int client_fd) {
+    int pid = recibir_entero(client_fd);
+    char pid_str[32];
+    sprintf(pid_str, "%d", pid);
+    
+    pthread_mutex_lock(&mutex_memoria);
+    t_tabla_segmentos *tabla = dictionary_get(tablas_segmentos_procesos, pid_str);
+    if (tabla == NULL) {
+        pthread_mutex_unlock(&mutex_memoria);
+        int fail = 0;
+        send(client_fd, &fail, sizeof(int), 0);
+        return;
+    }
+    
+    t_list *huecos_temp = list_create();
+    int size_huecos = list_size(huecos_libres);
+    for (int i = 0; i < size_huecos; i++) {
+        t_free_block *orig = list_get(huecos_libres, i);
+        t_free_block *copy = malloc(sizeof(t_free_block));
+        copy->base = orig->base;
+        copy->limite = orig->limite;
+        copy->size = orig->size;
+        list_add(huecos_temp, copy);
+    }
+    
+    bool can_allocate_all = true;
+    int size_seg = list_size(tabla->segmentos);
+    int *temp_bases = malloc(sizeof(int) * (size_seg > 0 ? size_seg : 1));
+    
+    for (int s = 0; s < size_seg; s++) {
+        t_segmento_mem *seg = list_get(tabla->segmentos, s);
+        int tamanio = seg->limite;
+        
+        t_free_block *selected_block = NULL;
+        int selected_index = -1;
+        int cant_temp_huecos = list_size(huecos_temp);
+        
+        if (strcmp(estrategia_asignacion, "BEST") == 0) {
+            int best_size = 999999;
+            for (int i = 0; i < cant_temp_huecos; i++) {
+                t_free_block *block = list_get(huecos_temp, i);
+                if (block->size >= tamanio && block->size < best_size) {
+                    best_size = block->size;
+                    selected_block = block;
+                    selected_index = i;
+                }
+            }
+        } else { // WORST
+            int worst_size = -1;
+            for (int i = 0; i < cant_temp_huecos; i++) {
+                t_free_block *block = list_get(huecos_temp, i);
+                if (block->size >= tamanio && block->size > worst_size) {
+                    worst_size = block->size;
+                    selected_block = block;
+                    selected_index = i;
+                }
+            }
+        }
+        
+        if (selected_block != NULL) {
+            temp_bases[s] = selected_block->base;
+            if (selected_block->size == tamanio) {
+                list_remove_and_destroy_element(huecos_temp, selected_index, free);
+            } else {
+                selected_block->base += tamanio;
+                selected_block->size -= tamanio;
+            }
+        } else {
+            can_allocate_all = false;
+            break;
+        }
+    }
+    
+    if (can_allocate_all) {
+        list_destroy_and_destroy_elements(huecos_libres, free);
+        huecos_libres = huecos_temp;
+        
+        for (int s = 0; s < size_seg; s++) {
+            t_segmento_mem *seg = list_get(tabla->segmentos, s);
+            seg->base = temp_bases[s];
+            log_info(logger, "## PID: %d - Segmento Creado %d (por des-suspension) - Base: %d - Tamaño: %d", pid, seg->id, seg->base, seg->limite);
+        }
+        pthread_mutex_unlock(&mutex_memoria);
+        
+        int ok = 1;
+        send(client_fd, &ok, sizeof(int), 0);
+        enviar_segmentos_actualizados(client_fd, tabla);
+    } else {
+        list_destroy_and_destroy_elements(huecos_temp, free);
+        pthread_mutex_unlock(&mutex_memoria);
+        
+        int fail = 0;
+        send(client_fd, &fail, sizeof(int), 0);
+    }
+    free(temp_bases);
 }
 
 /*

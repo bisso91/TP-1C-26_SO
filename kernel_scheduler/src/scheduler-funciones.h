@@ -52,6 +52,8 @@ extern t_queue *cola_new;
 extern t_queue *cola_ready;
 extern t_queue *cola_block;
 extern t_queue *cola_exit;
+extern t_queue *cola_susp_block;
+extern t_queue *cola_susp_ready;
 // ------------------------------ //
 
 // --- mutex para proteger colas --- //
@@ -59,6 +61,11 @@ extern pthread_mutex_t mutex_new;
 extern pthread_mutex_t mutex_ready;
 extern pthread_mutex_t mutex_block;
 extern pthread_mutex_t mutex_exit;
+extern pthread_mutex_t mutex_susp_block;
+extern pthread_mutex_t mutex_susp_ready;
+extern int suspension_timeout;
+extern t_dictionary *tiempos_suspension;
+extern int susp_counter;
 // --------------------------------- //
 
 // --- semáforos --- //
@@ -105,6 +112,13 @@ void *temporizador_quantum(void *arg);
 void *planificador_corto_plazo_rr(void *arg);
 
 t_pcb *sacar_de_cola_block(int pid);
+t_pcb *sacar_de_cola_susp_block(int pid);
+void encolar_proceso_block(t_pcb *pcb);
+void intentar_des_suspender_procesos();
+void actualizar_prioridad_en_ready(int pid, int nueva_prioridad);
+void lanzar_bsod();
+void *temporizador_suspension(void *arg);
+void *hilo_des_suspension_periodico(void *arg);
 
 // --- FUNCIONES GESTION DE PRIORIDADES E INVERSION --- //
 void registrar_prioridad(int pid, int prioridad);
