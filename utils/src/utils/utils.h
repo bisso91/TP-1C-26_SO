@@ -70,6 +70,9 @@ typedef enum {
   LECTURA_SWAP
 } op_code;
 
+#define LEER_BLOQUE LECTURA_SWAP
+#define ESCRIBIR_BLOQUE ESCRITURA_SWAP
+
 // fn server
 int iniciar_servidor(char *ip, char *puerto); // <-- CORREGIDO PARA MATCHEAR EL C
 int esperar_cliente(int socket_servidor);

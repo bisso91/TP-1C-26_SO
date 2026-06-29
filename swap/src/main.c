@@ -16,9 +16,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    t_config *config = config_create("swap.config");
+    if (argc < 2) {
+        log_error(logger, "Debe especificar el archivo de configuración. Uso: ./swap [config_path]");
+        log_destroy(logger);
+        return 1;
+    }
+
+    t_config *config = config_create(argv[1]);
     if (config == NULL){
-        log_error(logger, "No se pudo encontrar el archivo swap.config");
+        log_error(logger, "No se pudo encontrar el archivo de configuración %s", argv[1]);
         log_destroy(logger);
         return 1;
     }
@@ -29,7 +35,7 @@ int main(int argc, char* argv[]) {
     int block_size = config_get_int_value(config, "BLOCK_SIZE");
     char *swap_file_path = config_get_string_value(config, "SWAP_FILE_PATH");
 
-    // Initialize/Create Swap File of the exact size
+    // Initialize/Create Swap File of the exact size filled with zeroes
     FILE *f = fopen(swap_file_path, "wb+");
     if (f != NULL) {
         void *zeros = calloc(1, 1024);
@@ -74,7 +80,7 @@ int main(int argc, char* argv[]) {
         }
 
         switch (cod_op) {
-            case ESCRITURA_SWAP: {
+            case ESCRIBIR_BLOQUE: {
                 int size_total;
                 void *stream = recibir_buffer(&size_total, conexion);
 
@@ -102,7 +108,7 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            case LECTURA_SWAP: {
+            case LEER_BLOQUE: {
                 int block_num = recibir_entero(conexion);
 
                 void *block_data = malloc(block_size);
