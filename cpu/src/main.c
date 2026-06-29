@@ -273,25 +273,47 @@ int main(int argc, char *argv[]) {
           char *reg_size = tokens[2];
           uint32_t dir = obtener_valor_registro(reg_dir);
           uint32_t size_to_read = obtener_valor_registro(reg_size);
-          registros.PC++;
-          pcb->program_counter = registros.PC;
-          registros_por_pid[pcb->pid] = registros;
-          enviar_pcb(pcb, fd_dispatch, IO_STDIN);
-          enviar_entero(fd_dispatch, dir);
-          enviar_entero(fd_dispatch, size_to_read);
-          desaloja = true;
+          
+          int physical_addr = mmu_traducir_direccion(dir, size_to_read, pcb->cantidad_segmentos, pcb->tabla_segmentos);
+          if (physical_addr == -1) {
+            log_error(logger_cpu, "Segmentation Fault al traducir direccion logica %u para STDIN (size: %u)", dir, size_to_read);
+            registros.PC++;
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            enviar_pcb(pcb, fd_dispatch, SEGMENTATION_FAULT);
+            desaloja = true;
+          } else {
+            registros.PC++;
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            enviar_pcb(pcb, fd_dispatch, IO_STDIN);
+            enviar_entero(fd_dispatch, dir);
+            enviar_entero(fd_dispatch, size_to_read);
+            desaloja = true;
+          }
         } else if (strcmp(op, "STDOUT") == 0) {
           char *reg_dir = tokens[1];
           char *reg_size = tokens[2];
           uint32_t dir = obtener_valor_registro(reg_dir);
           uint32_t size_to_read = obtener_valor_registro(reg_size);
-          registros.PC++;
-          pcb->program_counter = registros.PC;
-          registros_por_pid[pcb->pid] = registros;
-          enviar_pcb(pcb, fd_dispatch, IO_STDOUT);
-          enviar_entero(fd_dispatch, dir);
-          enviar_entero(fd_dispatch, size_to_read);
-          desaloja = true;
+          
+          int physical_addr = mmu_traducir_direccion(dir, size_to_read, pcb->cantidad_segmentos, pcb->tabla_segmentos);
+          if (physical_addr == -1) {
+            log_error(logger_cpu, "Segmentation Fault al traducir direccion logica %u para STDOUT (size: %u)", dir, size_to_read);
+            registros.PC++;
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            enviar_pcb(pcb, fd_dispatch, SEGMENTATION_FAULT);
+            desaloja = true;
+          } else {
+            registros.PC++;
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            enviar_pcb(pcb, fd_dispatch, IO_STDOUT);
+            enviar_entero(fd_dispatch, dir);
+            enviar_entero(fd_dispatch, size_to_read);
+            desaloja = true;
+          }
         } else if (strcmp(op, "MUTEX_LOCK") == 0 || strcmp(op, "MUTEX_CREATE") == 0) {
           char *nombre_recurso = tokens[1];
           registros.PC++;
@@ -353,18 +375,24 @@ int main(int argc, char *argv[]) {
         }
 
         // 3. Check Interrupt
-        if (interrupted_pid == pcb->pid) {
-          log_info(logger_cpu, "## Interrupción recibida (op: %d)", interrupt_op);
-          pcb->program_counter = registros.PC;
-          registros_por_pid[pcb->pid] = registros;
-          if (interrupt_op == INTERRUPCION_DESALOJO) {
-            enviar_pcb(pcb, fd_dispatch, INTERRUPCION_DESALOJO);
+        if (interrupted_pid != 0) {
+          if (interrupted_pid == pcb->pid) {
+            log_info(logger_cpu, "## Interrupción recibida (op: %d)", interrupt_op);
+            pcb->program_counter = registros.PC;
+            registros_por_pid[pcb->pid] = registros;
+            if (interrupt_op == INTERRUPCION_DESALOJO) {
+              enviar_pcb(pcb, fd_dispatch, INTERRUPCION_DESALOJO);
+            } else {
+              enviar_pcb(pcb, fd_dispatch, FIN_QUANTUM);
+            }
+            interrupted_pid = 0;
+            interrupt_op = 0;
+            break;
           } else {
-            enviar_pcb(pcb, fd_dispatch, FIN_QUANTUM);
+            log_warning(logger_cpu, "INTERRUPT: Descartando interrupcion fantasma para PID %u (actualmente ejecuta PID %d)", interrupted_pid, pcb->pid);
+            interrupted_pid = 0;
+            interrupt_op = 0;
           }
-          interrupted_pid = 0;
-          interrupt_op = 0;
-          break;
         }
       }
 
