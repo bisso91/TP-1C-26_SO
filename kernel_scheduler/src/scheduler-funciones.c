@@ -204,7 +204,12 @@ void bloquear_proceso_por_io(t_pcb *pcb, char *nombre_syscall){
 }
 
 void desbloquear_proceso_de_io(t_pcb *pcb){
-    encolar_proceso_ready(pcb);
+    t_pcb *sacado = sacar_de_cola_block(pcb->pid);
+    if (sacado != NULL) {
+        encolar_proceso_ready(sacado);
+    } else {
+        encolar_proceso_ready(pcb);
+    }
 }
 
 void finalizar_proceso(t_pcb *pcb, char *motivo){
