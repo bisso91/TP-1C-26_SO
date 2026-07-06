@@ -13,6 +13,10 @@ int fd_dispatch = -1;
 int fd_interrupt = -1;
 int kernel_interrupt_fd = -1;
 uint32_t interrupted_pid = 0;
+int interrupt_op = 0;
+
+t_list *cpu_sticks = NULL;
+pthread_mutex_t mutex_cpu_sticks;
 
 // UNIFICO TODA LA PRIMERA PARTE EN FUNCION...
 void inicializar_cpu(char *config_path, char *id_cpu) {
@@ -51,6 +55,9 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
   if (!inicializar_registros(&registros, logger_cpu)) {
     log_error(logger_cpu, "Falla crítica al inicializar estructuras de CPU");
   }
+
+  cpu_sticks = list_create();
+  pthread_mutex_init(&mutex_cpu_sticks, NULL);
 
   // 5-Conexiones
   // MEMORIA--->Aca soy cliente
@@ -208,3 +215,226 @@ int recibir_operacion_cpu(int socket_cliente, t_log *logger) {
     return -1;
   }
 }
+
+void actualizar_sticks_desde_memoria() {
+    pthread_mutex_lock(&mutex_cpu_sticks);
+    
+    int size = list_size(cpu_sticks);
+    for (int i = 0; i < size; i++) {
+        t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+        if (conn->socket != -1) {
+            close(conn->socket);
+        }
+        free(conn->ip);
+        free(conn);
+    }
+    list_clean(cpu_sticks);
+    
+    int cop = OBTENER_STICKS;
+    send(fd_memory, &cop, sizeof(int), 0);
+    
+    int op = recibir_operacion(fd_memory);
+    if (op == OBTENER_STICKS) {
+        int size_payload;
+        void *stream = recibir_buffer(&size_payload, fd_memory);
+        
+        int desplazamiento = 0;
+        int cant_sticks;
+        memcpy(&cant_sticks, stream + desplazamiento, sizeof(int));
+        desplazamiento += sizeof(int);
+        
+        for (int i = 0; i < cant_sticks; i++) {
+            t_cpu_stick_conn *conn = malloc(sizeof(t_cpu_stick_conn));
+            memcpy(&(conn->base), stream + desplazamiento, sizeof(int));
+            desplazamiento += sizeof(int);
+            memcpy(&(conn->limite), stream + desplazamiento, sizeof(int));
+            desplazamiento += sizeof(int);
+            
+            int ip_len;
+            memcpy(&ip_len, stream + desplazamiento, sizeof(int));
+            desplazamiento += sizeof(int);
+            
+            conn->ip = malloc(ip_len);
+            memcpy(conn->ip, stream + desplazamiento, ip_len);
+            desplazamiento += ip_len;
+            
+            memcpy(&(conn->puerto), stream + desplazamiento, sizeof(int));
+            desplazamiento += sizeof(int);
+            
+            conn->socket = -1;
+            list_add(cpu_sticks, conn);
+        }
+        free(stream);
+    }
+    pthread_mutex_unlock(&mutex_cpu_sticks);
+}
+
+int obtener_conexion_stick(int dir_fisica) {
+    pthread_mutex_lock(&mutex_cpu_sticks);
+    int size = list_size(cpu_sticks);
+    t_cpu_stick_conn *matching_stick = NULL;
+    
+    for (int i = 0; i < size; i++) {
+        t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+        if (dir_fisica >= conn->base && dir_fisica <= conn->limite) {
+            matching_stick = conn;
+            break;
+        }
+    }
+    
+    if (matching_stick == NULL) {
+        pthread_mutex_unlock(&mutex_cpu_sticks);
+        actualizar_sticks_desde_memoria();
+        
+        pthread_mutex_lock(&mutex_cpu_sticks);
+        size = list_size(cpu_sticks);
+        for (int i = 0; i < size; i++) {
+            t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+            if (dir_fisica >= conn->base && dir_fisica <= conn->limite) {
+                matching_stick = conn;
+                break;
+            }
+        }
+    }
+    
+    if (matching_stick == NULL) {
+        pthread_mutex_unlock(&mutex_cpu_sticks);
+        return -1;
+    }
+    
+    if (matching_stick->socket == -1) {
+        char port_str[16];
+        sprintf(port_str, "%d", matching_stick->puerto);
+        matching_stick->socket = crear_conexion(matching_stick->ip, port_str);
+        if (matching_stick->socket != -1) {
+            int cop = IDENTIFICACION_CPU;
+            send(matching_stick->socket, &cop, sizeof(int), 0);
+            enviar_string("1", matching_stick->socket, IDENTIFICACION_CPU);
+        }
+    }
+    
+    int socket_to_return = matching_stick->socket;
+    pthread_mutex_unlock(&mutex_cpu_sticks);
+    return socket_to_return;
+}
+
+bool cpu_leer_memoria_segmentado(uint32_t dir_fisica, int tamanio, void *dest_buffer) {
+    int bytes_leidos = 0;
+    while (bytes_leidos < tamanio) {
+        uint32_t curr_dir = dir_fisica + bytes_leidos;
+        int rest = tamanio - bytes_leidos;
+        
+        pthread_mutex_lock(&mutex_cpu_sticks);
+        t_cpu_stick_conn *matching_stick = NULL;
+        int size_list = list_size(cpu_sticks);
+        for (int i = 0; i < size_list; i++) {
+            t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+            if (curr_dir >= conn->base && curr_dir <= conn->limite) {
+                matching_stick = conn;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&mutex_cpu_sticks);
+        
+        if (matching_stick == NULL) {
+            actualizar_sticks_desde_memoria();
+            pthread_mutex_lock(&mutex_cpu_sticks);
+            size_list = list_size(cpu_sticks);
+            for (int i = 0; i < size_list; i++) {
+                t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+                if (curr_dir >= conn->base && curr_dir <= conn->limite) {
+                    matching_stick = conn;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&mutex_cpu_sticks);
+        }
+        
+        if (matching_stick == NULL) {
+            log_error(logger_cpu, "Dirección física %u fuera de rango de los Memory Sticks", curr_dir);
+            return false;
+        }
+        
+        int limit_in_stick = matching_stick->limite - curr_dir + 1;
+        int chunk_size = (rest < limit_in_stick) ? rest : limit_in_stick;
+        
+        int socket_stick = obtener_conexion_stick(curr_dir);
+        if (socket_stick == -1) {
+            return false;
+        }
+        
+        int op = LECTURA_MEMORIA;
+        send(socket_stick, &op, sizeof(int), 0);
+        send(socket_stick, &curr_dir, sizeof(uint32_t), 0);
+        send(socket_stick, &chunk_size, sizeof(uint32_t), 0);
+        
+        int r = recv(socket_stick, dest_buffer + bytes_leidos, chunk_size, MSG_WAITALL);
+        if (r != chunk_size) {
+            return false;
+        }
+        bytes_leidos += chunk_size;
+    }
+    return true;
+}
+
+bool cpu_escribir_memoria_segmentado(uint32_t dir_fisica, int tamanio, void *src_buffer) {
+    int bytes_escritos = 0;
+    while (bytes_escritos < tamanio) {
+        uint32_t curr_dir = dir_fisica + bytes_escritos;
+        int rest = tamanio - bytes_escritos;
+        
+        pthread_mutex_lock(&mutex_cpu_sticks);
+        t_cpu_stick_conn *matching_stick = NULL;
+        int size_list = list_size(cpu_sticks);
+        for (int i = 0; i < size_list; i++) {
+            t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+            if (curr_dir >= conn->base && curr_dir <= conn->limite) {
+                matching_stick = conn;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&mutex_cpu_sticks);
+        
+        if (matching_stick == NULL) {
+            actualizar_sticks_desde_memoria();
+            pthread_mutex_lock(&mutex_cpu_sticks);
+            size_list = list_size(cpu_sticks);
+            for (int i = 0; i < size_list; i++) {
+                t_cpu_stick_conn *conn = list_get(cpu_sticks, i);
+                if (curr_dir >= conn->base && curr_dir <= conn->limite) {
+                    matching_stick = conn;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&mutex_cpu_sticks);
+        }
+        
+        if (matching_stick == NULL) {
+            log_error(logger_cpu, "Dirección física %u fuera de rango de los Memory Sticks", curr_dir);
+            return false;
+        }
+        
+        int limit_in_stick = matching_stick->limite - curr_dir + 1;
+        int chunk_size = (rest < limit_in_stick) ? rest : limit_in_stick;
+        
+        int socket_stick = obtener_conexion_stick(curr_dir);
+        if (socket_stick == -1) {
+            return false;
+        }
+        
+        int op = ESCRITURA_MEMORIA;
+        send(socket_stick, &op, sizeof(int), 0);
+        send(socket_stick, &curr_dir, sizeof(uint32_t), 0);
+        send(socket_stick, &chunk_size, sizeof(uint32_t), 0);
+        send(socket_stick, src_buffer + bytes_escritos, chunk_size, 0);
+        
+        int resultado;
+        int r = recv(socket_stick, &resultado, sizeof(int), MSG_WAITALL);
+        if (r != sizeof(int) || resultado != 1) {
+            return false;
+        }
+        bytes_escritos += chunk_size;
+    }
+    return true;
+}
+

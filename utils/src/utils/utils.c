@@ -27,6 +27,10 @@ int iniciar_servidor(char *ip, char *puerto) {
   socket_servidor =
       socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
 
+  // permitir reutilizar puerto inmediatamente
+  int yes = 1;
+  setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
   // bind del puerto
   bind(socket_servidor, servinfo->ai_addr, servinfo->ai_addrlen);
 

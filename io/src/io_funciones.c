@@ -107,13 +107,25 @@ void ejecutar_stdin(int conexion_shceduler, t_log *logger) {
            size_to_read);
   char *texto_leido = readline("> ");
 
-  char *texto_final = calloc(1, size_to_read);
+  char *texto_final = malloc(size_to_read);
+  if (texto_final == NULL) {
+    log_error(logger, "Error de asignacion de memoria para texto_final");
+    exit(EXIT_FAILURE);
+  }
+
+  int len_ingresado = (texto_leido != NULL) ? strlen(texto_leido) : 0;
+
+  if (len_ingresado >= size_to_read) {
+    memcpy(texto_final, texto_leido, size_to_read);
+  } else {
+    if (len_ingresado > 0) {
+      memcpy(texto_final, texto_leido, len_ingresado);
+    }
+    memset(texto_final + len_ingresado, '\0', size_to_read - len_ingresado);
+  }
 
   if (texto_leido != NULL) {
-    strncpy(texto_final, texto_leido, size_to_read);
-
-    free(texto_leido); // readline hace malloc interno, asique tengo q liberar
-                       // memoria
+    free(texto_leido);
   }
 
   // log obligatorio
