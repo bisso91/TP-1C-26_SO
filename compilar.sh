@@ -13,6 +13,16 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}=== Iniciando Compilación del TP ===${NC}"
 
+# 0. Compilar e instalar so-commons-library (al mismo nivel que el TP)
+if [ -d "../so-commons-library" ]; then
+    echo -e "${GREEN}--> Detectada carpeta de so-commons-library en el nivel superior. Compilando e instalando...${NC}"
+    make -C ../so-commons-library clean
+    make -C ../so-commons-library debug
+    sudo make -C ../so-commons-library install
+else
+    echo -e "${GREEN}--> No se encontró la carpeta ../so-commons-library. Se asume que ya está instalada en el sistema.${NC}"
+fi
+
 # 1. Compilar biblioteca compartida utils
 echo -e "${GREEN}--> Compilando biblioteca utils...${NC}"
 make -C utils clean
