@@ -59,3 +59,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Documentation and assets
+despliegue-paso-a-paso.md
+guia-de-despliegue-TP.md
+decisiones-diseno.md
+image.png
