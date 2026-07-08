@@ -21,21 +21,40 @@ int iniciar_servidor(char *ip, char *puerto) {
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  getaddrinfo(ip, puerto, &hints, &servinfo);
+  int g = getaddrinfo(ip, puerto, &hints, &servinfo);
+  if (g != 0) {
+    return -1;
+  }
 
   // socket de escucha
   socket_servidor =
       socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
+  if (socket_servidor == -1) {
+    freeaddrinfo(servinfo);
+    return -1;
+  }
 
   // permitir reutilizar puerto inmediatamente
   int yes = 1;
-  setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+  if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+    close(socket_servidor);
+    freeaddrinfo(servinfo);
+    return -1;
+  }
 
   // bind del puerto
-  bind(socket_servidor, servinfo->ai_addr, servinfo->ai_addrlen);
+  if (bind(socket_servidor, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
+    close(socket_servidor);
+    freeaddrinfo(servinfo);
+    return -1;
+  }
 
   // escucha de conexiones
-  listen(socket_servidor, SOMAXCONN);
+  if (listen(socket_servidor, SOMAXCONN) == -1) {
+    close(socket_servidor);
+    freeaddrinfo(servinfo);
+    return -1;
+  }
 
   freeaddrinfo(servinfo);
 
@@ -43,7 +62,7 @@ int iniciar_servidor(char *ip, char *puerto) {
 }
 
 int esperar_cliente(int socket_servidor) {
-
+  if (socket_servidor == -1) return -1;
   // aceptacion del cliente nuevo
   int socket_cliente = accept(socket_servidor, NULL, NULL);
   return socket_cliente;
@@ -61,14 +80,25 @@ int crear_conexion(char *ip, char *puerto) {
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  getaddrinfo(ip, puerto, &hints, &server_info);
+  int g = getaddrinfo(ip, puerto, &hints, &server_info);
+  if (g != 0) {
+    return -1;
+  }
 
   // creacion del socket
   int socket_cliente = socket(server_info->ai_family, server_info->ai_socktype,
                               server_info->ai_protocol);
+  if (socket_cliente == -1) {
+    freeaddrinfo(server_info);
+    return -1;
+  }
 
   // conexion al server
-  connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen);
+  if (connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen) == -1) {
+    close(socket_cliente);
+    freeaddrinfo(server_info);
+    return -1;
+  }
 
   freeaddrinfo(server_info);
 

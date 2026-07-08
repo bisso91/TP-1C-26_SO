@@ -34,11 +34,12 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
   }
 
   // 2-Archivo_Config
-  config_plana = config_create("cpu.config");
+  config_plana = config_create(config_path);
 
   // Validacion de archivo de config
   if (config_plana == NULL) {
-    log_error(logger_cpu, "No se pudo encontrar el archivo cpu.config");
+    log_error(logger_cpu, "No se pudo encontrar el archivo de config en %s", config_path);
+    exit(EXIT_FAILURE);
   } else {
     printf("Archivo de configuracion creado correctamente\n");
   }
@@ -49,6 +50,7 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
   // config
   if (!cargar_configuracion(&config_cpu, config_plana, logger_cpu)) {
     log_error(logger_cpu, "Error al cargar configuración");
+    exit(EXIT_FAILURE);
   }
 
   // 4-Inicializo_registros
@@ -73,7 +75,16 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
 
   // DISPATCH E INTERRUPT (Conexiones al Scheduler como cliente)
   log_info(logger_cpu, "Conectando a Scheduler Dispatch en %s:%s...", config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
-  fd_dispatch = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  int retries = 5;
+  while (retries > 0) {
+    fd_dispatch = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+    if (fd_dispatch != -1) {
+      break;
+    }
+    log_warning(logger_cpu, "No se pudo conectar a Scheduler Dispatch. Reintentando en 1 segundo... (%d intentos restantes)", retries - 1);
+    sleep(1);
+    retries--;
+  }
   if (fd_dispatch == -1) {
     log_error(logger_cpu, "No se pudo conectar a Scheduler Dispatch");
     exit(EXIT_FAILURE);
@@ -84,7 +95,16 @@ void inicializar_cpu(char *config_path, char *id_cpu) {
   log_info(logger_cpu, "Conexion establecida con Scheduler Dispatch (FD: %d)", fd_dispatch);
 
   log_info(logger_cpu, "Conectando a Scheduler Interrupt en %s:%s...", config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
-  fd_interrupt = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+  retries = 5;
+  while (retries > 0) {
+    fd_interrupt = crear_conexion(config_cpu.ip_scheduler, config_cpu.puerto_scheduler);
+    if (fd_interrupt != -1) {
+      break;
+    }
+    log_warning(logger_cpu, "No se pudo conectar a Scheduler Interrupt. Reintentando en 1 segundo... (%d intentos restantes)", retries - 1);
+    sleep(1);
+    retries--;
+  }
   if (fd_interrupt == -1) {
     log_error(logger_cpu, "No se pudo conectar a Scheduler Interrupt");
     exit(EXIT_FAILURE);

@@ -87,9 +87,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    t_config *config = config_create("kernel_memory.config"); // Corregido el typo congfig_create
+    char *config_path = (argc > 1) ? argv[1] : "kernel_memory.config";
+    t_config *config = config_create(config_path); // Corregido el typo congfig_create
     if (config == NULL) {
-        log_error(logger, "No se pudo encontrar el archivo kernel_memory.config");
+        log_error(logger, "No se pudo encontrar el archivo %s", config_path);
         return 1;
     }
 
